@@ -34,10 +34,10 @@
     };
 
     const state = {
-      start: L.latLng(LANDMARKS.station.lat, LANDMARKS.station.lng),
-      destination: L.latLng(LANDMARKS.clock_tower.lat, LANDMARKS.clock_tower.lng),
-      startLandmarkId: "station",
-      destLandmarkId: "clock_tower",
+      start: null,
+      destination: null,
+      startLandmarkId: "",
+      destLandmarkId: "",
       targetSetting: "start",
 
       // Animation State
@@ -117,31 +117,29 @@
       });
     }
 
-    const markers = {
-      start: L.marker(state.start, {
-        icon: createCircleIcon("start"),
-        draggable: true,
-        autoPan: true,
-      }).addTo(map),
+    const markers = { start: null, destination: null };
 
-      destination: L.marker(state.destination, {
-        icon: createCircleIcon("destination"),
-        draggable: true,
-        autoPan: true,
-      }).addTo(map),
-    };
-
-    markers.start.on("dragend", () => {
-      state.start = markers.start.getLatLng();
-      state.startLandmarkId = "custom";
-      byId("start-landmark-select").value = "custom";
-    });
-
-    markers.destination.on("dragend", () => {
-      state.destination = markers.destination.getLatLng();
-      state.destLandmarkId = "custom";
-      byId("dest-landmark-select").value = "custom";
-    });
+    function setWaypoint(kind, latlng, landmarkId = "custom") {
+      resetRoute();
+      state[kind] = latlng;
+      if (!markers[kind]) {
+        markers[kind] = L.marker(latlng, {
+          icon: createCircleIcon(kind), draggable: true, autoPan: true,
+        }).addTo(map);
+        markers[kind].on("dragend", () => {
+          setWaypoint(kind, markers[kind].getLatLng());
+        });
+      } else {
+        markers[kind].setLatLng(latlng);
+      }
+      const isStart = kind === "start";
+      state[isStart ? "startLandmarkId" : "destLandmarkId"] = landmarkId;
+      byId(isStart ? "start-landmark-select" : "dest-landmark-select").value = landmarkId;
+      state.targetSetting = !state.start ? "start" : !state.destination ? "destination" : (isStart ? "destination" : "start");
+      byId("deck-instruction").textContent = state.start && state.destination
+        ? "Waypoints ready. Calculate a route to begin exploring."
+        : `Choose a ${state.start ? "destination" : "start"} on the map or from the menu.`;
+    }
 
     // Toast Message
     function showToast(msg, duration = 3000) {
@@ -169,6 +167,34 @@
       }
     }
 
+    function resetRoute() {
+      ++state.routeRequestId;
+      clearRouteLayers();
+      state.latestResult = null;
+      state.animationPaused = false;
+      map.getContainer().classList.remove("playback-paused");
+      byId("resume-playback-btn").textContent = "Pause";
+      byId("resume-playback-btn").disabled = true;
+      byId("replay-btn").disabled = true;
+      ["distance", "time", "nodes", "algo"].forEach(key => {
+        byId(`summary-${key}`).textContent = "—";
+      });
+      byId("summary-progress").textContent = "Choose points, then calculate a route.";
+      byId("ops-status-text").textContent = "Ready · Select start and destination";
+      byId("deck-instruction").textContent = "Choose two points, then calculate a route.";
+      byId("turn-steps-list").textContent = "Route directions will appear after exploration finishes.";
+      byId("tactical-briefing-box").hidden = true;
+    }
+
+    function updateLiveSummary(metrics, algorithm, message) {
+      byId("summary-distance").textContent = `${(metrics.distance_m / 1000).toFixed(2)} km`;
+      byId("summary-time").textContent = `${(metrics.duration_s / 60).toFixed(1)} min`;
+      byId("summary-nodes").textContent = metrics.nodes_expanded.toLocaleString();
+      byId("summary-algo").textContent = algorithm;
+      byId("summary-replans").textContent = state.replanCount;
+      byId("summary-progress").textContent = message;
+    }
+
     // Calculate Route
     async function computeRoute() {
       if (!state.start || !state.destination) {
@@ -179,8 +205,8 @@
       const algo = byId("algorithm-select").value;
       const objective = byId("select-objective").value;
       const vehicle = byId("select-vehicle").value;
-      const requestId = ++state.routeRequestId;
-      clearRouteLayers();
+      resetRoute();
+      const requestId = state.routeRequestId;
 
       byId("ops-status-text").textContent = `Computing ${algo.toUpperCase()} route...`;
 
@@ -207,9 +233,7 @@
         }
 
         state.latestResult = data;
-        updateSummaryUI(data);
         startSpiderWebAnimation(data);
-        requestAIBriefing(data);
 
       } catch (err) {
         if (requestId !== state.routeRequestId) return;
@@ -244,10 +268,17 @@
     // Every returned parent/child connection is played in algorithm expansion order.
     // One canvas path holds the settled tree; SVG is reserved for the winning glow.
     function startSpiderWebAnimation(data) {
+      ++state.routeRequestId;
       clearRouteLayers();
       state.animationPaused = false;
       map.getContainer().classList.remove("playback-paused");
       byId("resume-playback-btn").textContent = "Pause";
+      byId("resume-playback-btn").disabled = false;
+      byId("replay-btn").disabled = false;
+      byId("tactical-briefing-box").hidden = true;
+      byId("turn-steps-list").textContent = "Exploring roads. Directions appear when the route is found.";
+      byId("deck-instruction").textContent = "Exploring roads from your selected start…";
+      updateLiveSummary({distance_m: 0, duration_s: 0, nodes_expanded: 0}, data.algorithm, "Exploring · Current path from start");
       const edges = data.search_tree_edges || [];
       const route = data.route_geometry || [];
       const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -293,6 +324,8 @@
 
       function beginReveal() {
         phase = "reveal";
+        updateSummaryUI(data);
+        byId("summary-progress").textContent = "Route found · Final distance and estimated time";
         frontier.setLatLngs([]);
         tip.setRadius(0);
         state.spiderWebLayer.removeLayer(exploredDots);
@@ -335,6 +368,9 @@
                 interactive: false,
               }).addTo(exploredDots);
             }
+            const snapshots = data.search_progress || [];
+            const snapshot = snapshots[Math.min(completed, snapshots.length - 1)];
+            if (snapshot) updateLiveSummary(snapshot, data.algorithm, "Exploring · Current path from start");
             settled.setLatLngs(accumulated);
             const edge = edges[completed];
             if (edge) {
@@ -381,6 +417,7 @@
               }
               setStatus(`Route Active · ${(data.distance_m / 1000).toFixed(2)} km (${data.algorithm})`);
               state.animationTimer = null;
+              requestAIBriefing(data);
               return;
             }
           }
@@ -395,6 +432,7 @@
 
     // AI Briefing Request
     async function requestAIBriefing(data) {
+      const requestId = state.routeRequestId;
       const box = byId("tactical-briefing-box");
       const content = byId("ai-briefing-content");
       const spinner = byId("ai-loading-spinner");
@@ -418,11 +456,13 @@
         });
 
         const aiData = await res.json();
+        if (requestId !== state.routeRequestId) return;
         content.textContent = aiData.analysis || "Tactical assessment completed.";
       } catch {
+        if (requestId !== state.routeRequestId) return;
         content.textContent = "AI tactical assessment is temporarily unavailable.";
       } finally {
-        spinner.hidden = true;
+        if (requestId === state.routeRequestId) spinner.hidden = true;
       }
     }
 
@@ -544,27 +584,20 @@
       const lmark = LANDMARKS[landmarkId];
       if (!lmark) return;
 
-      state[kind] = L.latLng(lmark.lat, lmark.lng);
-      markers[kind].setLatLng(state[kind]);
-
-      if (kind === "start") {
-        state.startLandmarkId = landmarkId;
-        byId("start-landmark-select").value = landmarkId;
-      } else {
-        state.destLandmarkId = landmarkId;
-        byId("dest-landmark-select").value = landmarkId;
-      }
+      setWaypoint(kind, L.latLng(lmark.lat, lmark.lng), landmarkId);
 
       map.panTo(state[kind]);
     }
 
     // Event Bindings
     byId("start-landmark-select").addEventListener("change", (e) => {
-      if (e.target.value !== "custom") setLandmark("start", e.target.value);
+      if (LANDMARKS[e.target.value]) setLandmark("start", e.target.value);
+      else state.targetSetting = "start";
     });
 
     byId("dest-landmark-select").addEventListener("change", (e) => {
-      if (e.target.value !== "custom") setLandmark("destination", e.target.value);
+      if (LANDMARKS[e.target.value]) setLandmark("destination", e.target.value);
+      else state.targetSetting = "destination";
     });
 
     document.querySelectorAll(".landmark-item").forEach((btn) => {
@@ -574,8 +607,9 @@
           showToast(`${btn.querySelector('.landmark-name').textContent} is already the start point.`);
           return;
         }
-        setLandmark("destination", id);
-        showToast(`Destination: ${btn.querySelector('.landmark-name').textContent}`);
+        const kind = state.targetSetting;
+        setLandmark(kind, id);
+        showToast(`${kind === "start" ? "Start" : "Destination"}: ${btn.querySelector('.landmark-name').textContent}`);
       });
     });
 
@@ -589,6 +623,21 @@
     // Action Buttons
     byId("calculate-route-btn").addEventListener("click", computeRoute);
     byId("dispatch-unit-btn").addEventListener("click", computeRoute);
+
+    byId("clear-route-btn").addEventListener("click", () => {
+      resetRoute();
+      for (const kind of ["start", "destination"]) {
+        if (markers[kind]) map.removeLayer(markers[kind]);
+        markers[kind] = null;
+        state[kind] = null;
+      }
+      state.startLandmarkId = state.destLandmarkId = "";
+      byId("start-landmark-select").value = "";
+      byId("dest-landmark-select").value = "";
+      state.targetSetting = "start";
+      state.replanCount = 0;
+      byId("summary-replans").textContent = "0";
+    });
 
     // Playback Controls
     byId("resume-playback-btn").addEventListener("click", () => {
@@ -711,24 +760,15 @@
       }
 
       if (state.targetSetting === "start") {
-        state.start = e.latlng;
-        markers.start.setLatLng(e.latlng);
-        state.startLandmarkId = "custom";
-        byId("start-landmark-select").value = "custom";
-        state.targetSetting = "destination";
+        setWaypoint("start", e.latlng);
         showToast("Start location placed. Now click for Destination.");
       } else {
-        state.destination = e.latlng;
-        markers.destination.setLatLng(e.latlng);
-        state.destLandmarkId = "custom";
-        byId("dest-landmark-select").value = "custom";
-        state.targetSetting = "start";
+        setWaypoint("destination", e.latlng);
         showToast("Destination location placed.");
       }
     });
 
-    // Auto-compute route after initial load
-    setTimeout(computeRoute, 350);
+    resetRoute();
   }
 
   // DOM Ready

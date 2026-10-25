@@ -62,6 +62,21 @@ class TestAlgorithms(unittest.TestCase):
                 self.assertTrue(result["found"])
                 self.assertEqual(result["distance_m"], 5_009)
 
+    def test_live_search_metrics_follow_actual_paths(self):
+        # Each snapshot measures the expanded parent path, not a fraction of the final route.
+        for name in ("bfs", "dfs", "dijkstra", "astar"):
+            with self.subTest(algorithm=name):
+                result = algorithms.run_algorithm(self.g, name, 1, 4, "length")
+                progress = result["search_progress"]
+                self.assertEqual(len(progress), result["nodes_expanded"])
+                self.assertEqual([p["nodes_expanded"] for p in progress],
+                                 list(range(1, len(progress) + 1)))
+                self.assertEqual(progress[0]["distance_m"], 0)
+                self.assertEqual(progress[-1]["distance_m"], result["distance_m"])
+                self.assertAlmostEqual(progress[-1]["duration_s"], result["duration_s"], delta=0.2)
+                if name in ("dijkstra", "astar"):
+                    self.assertEqual(progress[-1]["distance_m"], 110)
+
     def test_a_star_agreement_with_dijkstra(self):
         res_dijkstra = algorithms.dijkstra_search(self.g, start_node=1, dest_node=4, objective="length")
         res_astar = algorithms.a_star_search(self.g, start_node=1, dest_node=4, objective="length")
@@ -148,6 +163,10 @@ class TestFlaskAPI(unittest.TestCase):
                     self.assertTrue(data["success"])
                     self.assertEqual(len(data["search_tree_edges"]), 1_200)
                     self.assertEqual(len(data["visited_coords"]), 1_201)
+                    self.assertEqual(len(data["search_progress"]), 1_201)
+                    self.assertEqual(data["search_progress"][-1]["distance_m"], data["distance_m"])
+                    self.assertEqual(data["search_progress"][-1]["duration_s"], data["duration_s"])
+                    self.assertEqual(data["search_progress"][-1]["nodes_expanded"], data["nodes_expanded"])
                     self.assertEqual(data["search_tree_edges"][-1][-1], data["destination"]["snapped"])
 
     def test_api_graph_route(self):

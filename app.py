@@ -382,6 +382,7 @@ def calculate_route():
         },
         route_geometry=route_latlngs,
         search_tree_edges=search_tree_edges,
+        search_progress=result.get("search_progress", [{"distance_m": 0, "duration_s": 0, "nodes_expanded": 1}]),
         distance_m=result["distance_m"],
         duration_s=result["duration_s"],
         nodes_expanded=result["nodes_expanded"],

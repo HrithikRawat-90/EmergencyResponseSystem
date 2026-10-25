@@ -12,6 +12,13 @@ Purpose: educational Dehradun emergency vehicle routing simulator. Python Flask 
 - test_api.py / test_objectives.py: HTTP integration scripts requiring a running server at 127.0.0.1:5000.
 - README.md: setup and feature guide. PROGRESS.md: historical work log; may describe superseded UI.
 
+## Interaction changes (2026-10-25)
+- Initial endpoints are null; menus show placeholders, markers are created only on selection, and startup never requests a route. Choose points through menus/map/landmark cards, then Calculate/Find Route.
+- static/app.js: setWaypoint centralizes selection/dragging and invalidates old routes; resetRoute cancels playback and rejects stale route/advisory responses. Clear resets both markers/menus, route/search layers, summary, replay and replan count. Hazards remain separate.
+- algorithms.py: record_search_progress snapshots actual start-to-current-node distance/time and explored count on each expansion for all four searches, preserving selected parallel-edge keys. Raw totals avoid rounding drift; JSON snapshots round to tenths. app.py exposes search_progress in visited order (including origin; same-node route has one zero snapshot).
+- Animation summary uses search_progress[completed connections] during exploration, labeled Current path from start; values can increase/decrease as branches change. Final metrics/directions appear when search finishes; AI advisory starts after route reveal. Pause/Resume freezes playback and metrics in both phases; Replay resets progress. Backend computes the trace first; pause controls its visualization.
+- Relevant UI: templates/index.html summary-progress, clear-route-btn, resume-playback-btn; no frontend build. Regression checks: tests.py covers per-expansion metrics and complete 1,201-snapshot API traces; test_animation.cjs covers manual startup, frozen summary, replay and clear cleanup.
+
 ## Current coverage (2026-10-24)
 - CENTER = (30.3165, 78.0322); DISTANCE_M = 3_500 (box half-width).
 - Approx. 7 km × 7 km = 49 km²; original half-width 1,500 m => 9 km². Area factor = (3500/1500)^2 = 5.44. This is bounding-box coverage, not a promise of roads at every location.
@@ -31,7 +38,7 @@ Purpose: educational Dehradun emergency vehicle routing simulator. Python Flask 
 ## Run and verify
 - Normal setup: Python 3.12 virtualenv; pip install -r requirements.txt; python app.py.
 - Unit/API tests: python -m unittest tests.py -v. HTTP checks: python test_api.py and python test_objectives.py with server running.
-- Latest validation (2026-10-24): 19 unittests passed using the expanded real cache, including outer-sector routing and 1,200-edge trace regression across all algorithms. Browser checks exercise progressive reveal, pause/resume, live speed, replay and renderer cleanup. Real Railway Station -> Clock Tower Dijkstra/time trace: 780 connections / 781 expanded nodes. Initial download attempts encountered public server errors, but the expanded cache is now available.
+- Latest validation (2026-10-25): 20 unittests passed using the expanded real cache, including outer-sector routing and 1,200-edge trace regression across all algorithms. Browser checks exercise progressive reveal, pause/resume, live speed, replay and renderer cleanup. Real Railway Station -> Clock Tower Dijkstra/time trace: 780 connections / 781 expanded nodes. Initial download attempts encountered public server errors, but the expanded cache is now available.
 - Local environment found during this change: .venv launcher points to a removed Python312 installation. Bundled Codex Python 3.12 works with PYTHONPATH set to .venv/Lib/site-packages; system Python 3.15 lacks project dependencies. Recreate the venv with a working Python 3.12 installation if its launcher still fails.
 
 ## Existing limitations to consider only when relevant

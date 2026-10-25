@@ -453,7 +453,12 @@ body.app-body {
   transition: all 0.15s ease;
 }
 
-.btn-outline-subtle:hover {
+.btn-outline-subtle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn-outline-subtle:hover:not(:disabled) {
   background-color: #f9fafb;
   border-color: #9ca3af;
   color: var(--text-main);
@@ -864,7 +869,8 @@ body.app-body {
               <label for="start-landmark-select" class="field-label">Start</label>
               <div class="select-wrapper">
                 <select id="start-landmark-select" class="clean-select">
-                  <option value="station" selected>Railway Station</option>
+                  <option value="" selected disabled>Choose start…</option>
+                  <option value="station">Railway Station</option>
                   <option value="clock_tower">Clock Tower</option>
                   <option value="doon_hospital">Doon Hospital</option>
                   <option value="parade_ground">Parade Ground</option>
@@ -877,7 +883,8 @@ body.app-body {
               <label for="dest-landmark-select" class="field-label">Destination</label>
               <div class="select-wrapper">
                 <select id="dest-landmark-select" class="clean-select">
-                  <option value="clock_tower" selected>Clock Tower</option>
+                  <option value="" selected disabled>Choose destination…</option>
+                  <option value="clock_tower">Clock Tower</option>
                   <option value="station">Railway Station</option>
                   <option value="doon_hospital">Doon Hospital</option>
                   <option value="parade_ground">Parade Ground</option>
@@ -931,8 +938,9 @@ body.app-body {
 
               <div class="deck-actions-bar">
                 <button id="dispatch-unit-btn" class="btn-primary-green" type="button">Find Route</button>
-                <button id="resume-playback-btn" class="btn-outline-subtle" type="button">Pause</button>
-                <button id="replay-btn" class="btn-outline-subtle" type="button">Replay</button>
+                <button id="resume-playback-btn" disabled class="btn-outline-subtle" type="button">Pause</button>
+                <button id="replay-btn" disabled class="btn-outline-subtle" type="button">Replay</button>
+                <button id="clear-route-btn" class="btn-outline-subtle" type="button">Clear</button>
                 <div class="speed-selector-group">
                   <span class="speed-label">Speed:</span>
                   <select id="anim-speed-select" class="speed-select" aria-label="Animation Speed">
@@ -1117,6 +1125,7 @@ body.app-body {
         <section class="card summary-card">
           <h2 class="card-heading">Route summary</h2>
 
+          <p id="summary-progress" class="deck-subtitle" aria-live="polite">Choose start and destination.</p>
           <div class="summary-list">
             <div class="summary-row">
               <span class="summary-label">Distance</span>
@@ -1136,7 +1145,7 @@ body.app-body {
             </div>
             <div class="summary-row">
               <span class="summary-label">Algorithm</span>
-              <span id="summary-algo" class="summary-value">A*</span>
+              <span id="summary-algo" class="summary-value">&mdash;</span>
             </div>
           </div>
         </section>

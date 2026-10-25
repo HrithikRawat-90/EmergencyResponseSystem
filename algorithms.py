@@ -144,7 +144,7 @@ def reconstruct_path(
     return path_edges
 
 
-def calculate_route_metrics(graph, path_edges: List[Tuple[Any, Any, Any]]) -> Dict[str, float]:
+def calculate_route_metrics(graph, path_edges: List[Tuple[Any, Any, Any]], *, rounded=True) -> Dict[str, float]:
     """Calculate total distance (m) and estimated duration (s) along path edges."""
     total_length = 0.0
     total_duration = 0.0
@@ -159,9 +159,23 @@ def calculate_route_metrics(graph, path_edges: List[Tuple[Any, Any, Any]]) -> Di
             else:
                 total_duration += l / 8.33  # ~30 km/h fallback
     return {
-        "distance_m": round(total_length, 1),
-        "duration_s": round(total_duration, 1),
+        "distance_m": round(total_length, 1) if rounded else total_length,
+        "duration_s": round(total_duration, 1) if rounded else total_duration,
     }
+
+
+def record_search_progress(graph, node, parent_map, totals, progress):
+    """Snapshot the actual parent path at expansion, preserving parallel-edge choice."""
+    distance, duration = 0.0, 0.0
+    if node in parent_map:
+        parent, key = parent_map[node]
+        distance, duration = totals[parent]
+        edge = calculate_route_metrics(graph, [(parent, node, key)], rounded=False)
+        distance += edge["distance_m"]
+        duration += edge["duration_s"]
+    totals[node] = (distance, duration)
+    progress.append({"distance_m": round(distance, 1), "duration_s": round(duration, 1),
+                     "nodes_expanded": len(progress) + 1})
 
 
 def breadth_first_search(
@@ -200,12 +214,15 @@ def breadth_first_search(
     visited: Set[Any] = {start_node}
     search_order: List[Any] = []
     parent_map: Dict[Any, Tuple[Any, Any]] = {}  # child -> (parent, key)
+    search_progress = []
+    path_totals = {}
     edges_considered = 0
     found = False
 
     while queue:
         u = queue.popleft()
         search_order.append(u)
+        record_search_progress(graph, u, parent_map, path_totals, search_progress)
 
         if u == dest_node:
             found = True
@@ -234,6 +251,7 @@ def breadth_first_search(
             "found": False,
             "visited_nodes": search_order,
             "tree_edges": tree_edges,
+            "search_progress": search_progress,
             "nodes_expanded": len(search_order),
             "edges_considered": edges_considered,
             "execution_time_ms": exec_time,
@@ -251,6 +269,7 @@ def breadth_first_search(
         "path_edges": path_edges,
         "visited_nodes": search_order,
         "tree_edges": tree_edges,
+        "search_progress": search_progress,
         "nodes_expanded": len(search_order),
         "edges_considered": edges_considered,
         "cost": float(len(path_edges)),  # Hops
@@ -298,6 +317,8 @@ def depth_first_search(
     visited: Set[Any] = set()
     search_order: List[Any] = []
     parent_map: Dict[Any, Tuple[Any, Any]] = {}
+    search_progress = []
+    path_totals = {}
     edges_considered = 0
     found = False
 
@@ -307,6 +328,7 @@ def depth_first_search(
             continue
         visited.add(u)
         search_order.append(u)
+        record_search_progress(graph, u, parent_map, path_totals, search_progress)
 
         if u == dest_node:
             found = True
@@ -334,6 +356,7 @@ def depth_first_search(
             "found": False,
             "visited_nodes": search_order,
             "tree_edges": tree_edges,
+            "search_progress": search_progress,
             "nodes_expanded": len(search_order),
             "edges_considered": edges_considered,
             "execution_time_ms": exec_time,
@@ -351,6 +374,7 @@ def depth_first_search(
         "path_edges": path_edges,
         "visited_nodes": search_order,
         "tree_edges": tree_edges,
+        "search_progress": search_progress,
         "nodes_expanded": len(search_order),
         "edges_considered": edges_considered,
         "cost": float(len(path_edges)),
@@ -400,6 +424,8 @@ def dijkstra_search(
     pq: List[Tuple[float, int, Any]] = [(0.0, counter, start_node)]
     dist: Dict[Any, float] = {start_node: 0.0}
     parent_map: Dict[Any, Tuple[Any, Any]] = {}
+    search_progress = []
+    path_totals = {}
     visited_nodes: List[Any] = []
     settled: Set[Any] = set()
     edges_considered = 0
@@ -411,6 +437,7 @@ def dijkstra_search(
             continue
         settled.add(u)
         visited_nodes.append(u)
+        record_search_progress(graph, u, parent_map, path_totals, search_progress)
 
         if u == dest_node:
             found = True
@@ -439,6 +466,7 @@ def dijkstra_search(
             "found": False,
             "visited_nodes": visited_nodes,
             "tree_edges": tree_edges,
+            "search_progress": search_progress,
             "nodes_expanded": len(visited_nodes),
             "edges_considered": edges_considered,
             "execution_time_ms": exec_time,
@@ -456,6 +484,7 @@ def dijkstra_search(
         "path_edges": path_edges,
         "visited_nodes": visited_nodes,
         "tree_edges": tree_edges,
+        "search_progress": search_progress,
         "nodes_expanded": len(visited_nodes),
         "edges_considered": edges_considered,
         "cost": round(dist[dest_node], 2),
@@ -520,6 +549,8 @@ def a_star_search(
     pq: List[Tuple[float, float, int, Any]] = [(h_start, 0.0, counter, start_node)]  # (f, g, count, node)
     g_score: Dict[Any, float] = {start_node: 0.0}
     parent_map: Dict[Any, Tuple[Any, Any]] = {}
+    search_progress = []
+    path_totals = {}
     visited_nodes: List[Any] = []
     settled: Set[Any] = set()
     edges_considered = 0
@@ -531,6 +562,7 @@ def a_star_search(
             continue
         settled.add(u)
         visited_nodes.append(u)
+        record_search_progress(graph, u, parent_map, path_totals, search_progress)
 
         if u == dest_node:
             found = True
@@ -560,6 +592,7 @@ def a_star_search(
             "found": False,
             "visited_nodes": visited_nodes,
             "tree_edges": tree_edges,
+            "search_progress": search_progress,
             "nodes_expanded": len(visited_nodes),
             "edges_considered": edges_considered,
             "execution_time_ms": exec_time,
@@ -577,6 +610,7 @@ def a_star_search(
         "path_edges": path_edges,
         "visited_nodes": visited_nodes,
         "tree_edges": tree_edges,
+        "search_progress": search_progress,
         "nodes_expanded": len(visited_nodes),
         "edges_considered": edges_considered,
         "cost": round(g_score[dest_node], 2),
