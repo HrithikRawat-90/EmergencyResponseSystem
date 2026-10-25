@@ -370,7 +370,7 @@ body.app-body {
 /* Bottom Cards Row */
 .bottom-cards-row {
   display: grid;
-  grid-template-columns: 1fr 260px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -464,89 +464,6 @@ body.app-body {
   color: var(--text-main);
 }
 
-/* Tactical AI Dispatch Box */
-.tactical-box {
-  margin: 12px 0;
-  padding: 12px 14px;
-  background-color: #f7faf8;
-  border: 1px solid #d4e7e0;
-  border-radius: 10px;
-}
-
-.tactical-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.tactical-badge {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--primary-green);
-  letter-spacing: 0.4px;
-}
-
-.tactical-text {
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
-
-.deck-disclaimer {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-
-/* Landmarks Card */
-.landmarks-card {
-  padding: 16px 18px;
-}
-
-.card-heading {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-main);
-  margin-bottom: 12px;
-}
-
-.landmarks-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.landmark-item {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  text-align: left;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 6px 8px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.landmark-item:hover {
-  background-color: #f3f7f5;
-  border-color: var(--border-card);
-}
-
-.landmark-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-main);
-}
-
-.landmark-coords {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
 /* Right Column (Parameters & Summary) */
 .right-column {
   display: flex;
@@ -631,94 +548,25 @@ body.app-body {
   color: var(--text-main);
 }
 
-/* Simulated Traffic Hazard Drawer */
-.hazard-drawer {
-  margin: 12px 0;
-  padding: 12px 14px;
-  background-color: #fffbeb;
-  border: 1px solid #fde68a;
-  border-radius: 10px;
-}
-
-.hazard-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.hazard-type-selector {
-  display: flex;
-  gap: 6px;
-}
-
-.hazard-pill {
-  padding: 4px 10px;
-  font-size: 11.5px;
-  font-weight: 500;
-  background-color: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: var(--radius-pill);
-  cursor: pointer;
-}
-
-.hazard-pill.is-active {
-  background-color: var(--traffic-orange);
-  color: #ffffff;
-  border-color: var(--traffic-orange);
-}
-
-.hazard-controls {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.btn-hazard-place {
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  background-color: var(--incident-red);
-  color: #ffffff;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.btn-hazard-clear {
-  padding: 6px 12px;
-  font-size: 12px;
-  background: transparent;
-  color: #6b7280;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.hazards-chips-box {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.hazard-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: #ffffff;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
-}
-
-.hazard-chip button {
-  background: none;
-  border: none;
-  color: #dc2626;
-  font-weight: bold;
-  cursor: pointer;
-}
+/* Incident controls stay contained and wrap on smaller screens. */
+.hazard-drawer { margin: 16px 0; padding: 18px; background: #f8faf9; border: 1px solid #dbe5df; border-radius: 12px; }
+.hazard-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+.hazard-header .card-heading { margin: 0 0 5px; }
+.hazard-help { font-size: 12px; line-height: 1.5; color: var(--text-secondary); margin: 0; }
+.hazard-type-selector, .hazard-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.hazard-controls { margin-bottom: 12px; }
+.hazard-pill { padding: 8px 12px; font: inherit; font-size: 12px; background: white; color: #475569; border: 1px solid #d1dcd5; border-radius: 8px; cursor: pointer; }
+.hazard-pill.is-active { color: #fff; background: #1b4d44; border-color: #1b4d44; }
+.btn-hazard-place, .btn-hazard-clear { min-height: 38px; padding: 8px 14px; font: inherit; font-size: 12px; border-radius: 8px; cursor: pointer; }
+.btn-hazard-place { color: #fff; background: #1b4d44; border: 1px solid #1b4d44; }
+.btn-hazard-place[aria-pressed="true"] { background: #b45309; border-color: #b45309; }
+.btn-hazard-clear { color: #475569; background: #fff; border: 1px solid #d1dcd5; }
+.hazards-chips-box { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.hazard-chip { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; padding: 7px 10px; background: #fff; border: 1px solid #e5d6d0; border-radius: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.hazard-chip button { border: 0; background: transparent; color: #b91c1c; font-size: 18px; cursor: pointer; }
+.settings-check { display: flex; align-items: flex-start; gap: 8px; margin: 16px 0; font-size: 13px; line-height: 1.5; }
+#tabpanel-right-details .summary-value { max-width: 62%; text-align: right; overflow-wrap: anywhere; }
+#map.placing-incident { cursor: crosshair; }
 
 /* Modal Benchmark Dialog */
 .modal-scrim {
@@ -853,7 +701,6 @@ body.app-body {
         <button id="nav-btn-navigate" class="nav-item" type="button">Navigate</button>
         <button id="nav-btn-route" class="nav-item is-active" type="button">Route</button>
         <button id="nav-btn-traffic" class="nav-item" type="button">Traffic</button>
-        <button id="nav-btn-settings" class="nav-item" type="button">Settings</button>
       </nav>
 
       <!-- Center Content Column (Map on top, Details on bottom) -->
@@ -924,7 +771,7 @@ body.app-body {
         <!-- Bottom Row (Two Cards: Action Deck & Landmarks) -->
         <div class="bottom-cards-row">
           
-          <!-- Bottom Left Card: Controls, Simulation & Tactical Briefing -->
+          <!-- Bottom Left Card: Controls and Simulation -->
           <section class="card action-deck-card">
             <div class="pill-tabs-header">
               <button id="tab-action-route" class="tab-pill is-active" type="button">Route</button>
@@ -932,7 +779,7 @@ body.app-body {
               <button id="tab-action-units" class="tab-pill" type="button">Units</button>
             </div>
 
-            <!-- Tab 1: Route Actions & AI Tactical Summary -->
+            <!-- Tab 1: Route Actions -->
             <div id="tabpanel-route" class="tab-content">
               <p id="deck-instruction" class="deck-subtitle">Choose two points, then calculate a route.</p>
 
@@ -954,31 +801,21 @@ body.app-body {
                 <button id="benchmark-modal-btn" class="btn-outline-subtle" type="button">Benchmark 4</button>
               </div>
 
-              <!-- Tactical AI Dispatch Briefing (Clean & Minimalist) -->
-              <div id="tactical-briefing-box" class="tactical-box" hidden>
-                <div class="tactical-header">
-                  <span class="tactical-badge">Tactical Dispatch Advisory</span>
-                  <span id="ai-loading-spinner" class="spinner-sm" hidden></span>
-                </div>
-                <div id="ai-briefing-content" class="tactical-text">
-                  Awaiting dispatch calculation...
-                </div>
-              </div>
-
               <!-- Simulated Traffic / Hazard Drawer (Activated via Traffic Nav tab) -->
               <div id="traffic-hazard-panel" class="hazard-drawer" hidden>
                 <div class="hazard-header">
-                  <span class="field-label">Simulate Incidents:</span>
+                  <div><h2 class="card-heading">Simulate incidents</h2><p class="hazard-help">Choose an incident, then place it on a road.</p></div>
                   <div class="hazard-type-selector">
                     <button class="hazard-pill is-active" data-type="roadblock" type="button">Roadblock</button>
-                    <button class="hazard-pill" data-type="accident" type="button">Accident (+350%)</button>
-                    <button class="hazard-pill" data-type="congestion" type="button">Traffic (+200%)</button>
+                    <button class="hazard-pill" data-type="accident" type="button">Accident · 3.5× cost</button>
+                    <button class="hazard-pill" data-type="congestion" type="button">Traffic · 2× cost</button>
                   </div>
                 </div>
                 <div class="hazard-controls">
                   <button id="place-incident-btn" class="btn-hazard-place" type="button">+ Place Hazard on Map</button>
                   <button id="clear-all-hazards-btn" class="btn-hazard-clear" type="button">Clear All</button>
                 </div>
+                <p id="incident-status" class="hazard-help" role="status">No active incidents.</p>
                 <div id="hazards-list" class="hazards-chips-box"></div>
               </div>
 
@@ -1022,28 +859,6 @@ body.app-body {
             </div>
           </section>
 
-          <!-- Bottom Right Card: Interactive Landmarks -->
-          <section class="card landmarks-card">
-            <h2 class="card-heading">Landmarks</h2>
-            <div class="landmarks-list">
-              <button class="landmark-item" data-id="clock_tower" data-lat="30.3254" data-lng="78.0419" type="button">
-                <span class="landmark-name">Clock Tower</span>
-                <span class="landmark-coords">30.3254, 78.0419</span>
-              </button>
-              <button class="landmark-item" data-id="doon_hospital" data-lat="30.3189" data-lng="78.0408" type="button">
-                <span class="landmark-name">Doon Hospital</span>
-                <span class="landmark-coords">30.3189, 78.0408</span>
-              </button>
-              <button class="landmark-item" data-id="station" data-lat="30.3143" data-lng="78.0334" type="button">
-                <span class="landmark-name">Railway Station</span>
-                <span class="landmark-coords">30.3143, 78.0334</span>
-              </button>
-              <button class="landmark-item" data-id="parade_ground" data-lat="30.3285" data-lng="78.0482" type="button">
-                <span class="landmark-name">Parade Ground</span>
-                <span class="landmark-coords">30.3285, 78.0482</span>
-              </button>
-            </div>
-          </section>
 
         </div>
       </div>
@@ -1059,7 +874,7 @@ body.app-body {
             <button id="tab-right-settings" class="tab-pill" type="button">Settings</button>
           </div>
 
-          <div class="params-body">
+          <div id="tabpanel-right-route" class="params-body">
             <!-- Vehicle Field -->
             <div class="form-row">
               <label for="select-vehicle" class="field-label">Vehicle</label>
@@ -1118,6 +933,26 @@ body.app-body {
             <button id="calculate-route-btn" class="btn-calculate" type="button">
               Calculate route
             </button>
+          </div>
+          <div id="tabpanel-right-details" class="params-body" hidden>
+            <h2 class="card-heading">Route details</h2>
+            <div class="summary-row"><span class="summary-label">Start</span><span id="details-start" class="summary-value">Not selected</span></div>
+            <div class="summary-row"><span class="summary-label">Destination</span><span id="details-destination" class="summary-value">Not selected</span></div>
+            <div class="summary-row"><span class="summary-label">Objective</span><span id="details-objective" class="summary-value">Minimum travel time</span></div>
+            <p id="details-result" class="form-help-text">Choose points and calculate a route to see search details.</p>
+          </div>
+          <div id="tabpanel-right-settings" class="params-body" hidden>
+            <h2 class="card-heading">Playback settings</h2>
+            <div class="form-row">
+              <label for="settings-speed-select" class="field-label">Animation speed</label>
+              <select id="settings-speed-select" class="clean-select">
+                <option value="0.23">0.23x</option><option value="0.5">0.5x</option>
+                <option value="1" selected>1x</option><option value="1.5">1.5x</option><option value="2">2x</option>
+              </select>
+            </div>
+            <label class="settings-check"><input id="show-search-toggle" type="checkbox" checked> Show exploration branches</label>
+            <label class="settings-check"><input id="auto-replan-toggle" type="checkbox" checked> Recalculate after incident changes</label>
+            <p class="form-help-text">Playback changes apply immediately. Automatic recalculation requires both waypoints.</p>
           </div>
         </section>
 

@@ -11,6 +11,7 @@ Tests:
 """
 
 import unittest
+import json
 from unittest.mock import patch
 import networkx as nx
 
@@ -227,6 +228,37 @@ class TestFlaskAPI(unittest.TestCase):
         self.assertEqual(res.status_code, 400)
         data = res.get_json()
         self.assertFalse(data.get("success"))
+
+    def test_roadblock_strict_json_nearest_segment_and_parallel_edges(self):
+        graph = nx.MultiDiGraph(crs="EPSG:4326")
+        graph.add_node(1, y=30.31, x=78.03)
+        graph.add_node(2, y=30.33, x=78.03)
+        graph.add_node(3, y=30.31, x=78.05)
+        graph.add_edge(1, 3, key=0, length=2000)
+        graph.add_edge(1, 2, key=3, length=2200)
+        graph.add_edge(1, 2, key=4, length=2200)
+        graph.add_edge(2, 1, key=8, length=2200)
+        with patch.object(app, "road_graph", graph), patch.object(app, "_incident_registry", {}), \
+             patch.object(app, "_blocked_edges", set()), patch.object(app, "_incident_penalties", {}):
+            response = self.client.post("/api/incidents", json={"lat": 30.32, "lon": 78.0301, "type": "roadblock"})
+            self.assertEqual(response.status_code, 200)
+            def reject_constant(value):
+                raise ValueError(f"Invalid JSON constant: {value}")
+            data = json.loads(response.get_data(as_text=True), parse_constant=reject_constant)
+            self.assertIsNone(data["incident"]["penalty"])
+            self.assertEqual(app._blocked_edges, {(1, 2, 3), (1, 2, 4), (2, 1, 8)})
+            self.assertFalse(algorithms.dijkstra_search(graph, 1, 2, blocked_edges=app._blocked_edges)["found"])
+            json.loads(self.client.get("/api/incidents").get_data(as_text=True), parse_constant=reject_constant)
+            self.client.delete(f"/api/incidents/{data['incident']['id']}")
+            self.assertFalse(app._blocked_edges)
+            self.assertTrue(algorithms.dijkstra_search(graph, 1, 2, blocked_edges=app._blocked_edges)["found"])
+
+    def test_incident_invalid_coordinates(self):
+        for lat, lon in ((None, 78.03), ("invalid", 78.03), (float("nan"), 78.03), (0, 0)):
+            with self.subTest(lat=lat):
+                response = self.client.post("/api/incidents", json={"lat": lat, "lon": lon, "type": "roadblock"})
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(response.get_json()["success"])
 
     def test_incidents_crud(self):
         # 1. Add incident

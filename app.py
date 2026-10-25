@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import threading
 import time
+from uuid import uuid4
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from flask import Flask, Response, jsonify, render_template, request, url_for
@@ -460,27 +461,31 @@ def add_incident():
         return jsonify(success=False, error="Graph unavailable."), 503
 
     payload = request.get_json(silent=True) or {}
-    lat = float(payload.get("lat", CENTER[0]))
-    lon = float(payload.get("lon", CENTER[1]))
+    try:
+        lat = float(payload.get("lat", CENTER[0]))
+        lon = float(payload.get("lon", CENTER[1]))
+    except (TypeError, ValueError):
+        return jsonify(success=False, error="Incident coordinates must be numeric."), 400
+    if not math.isfinite(lat) or not math.isfinite(lon):
+        return jsonify(success=False, error="Incident coordinates must be finite."), 400
+    if not (BOUNDS[0][0] <= lat <= BOUNDS[1][0] and
+            BOUNDS[0][1] <= lon <= BOUNDS[1][1]):
+        return jsonify(success=False, error="Place incidents inside the Dehradun sector."), 400
     incident_type = payload.get("type", "accident")
     if incident_type not in ("accident", "congestion", "roadblock"):
         return jsonify(success=False, error="Invalid incident type."), 400
 
     name = payload.get("title", f"Simulated {incident_type.title()}")
 
-    near_node, n_lat, n_lon, _ = snap_coordinate_to_node(lat, lon)
-    edges = list(road_graph.out_edges(near_node, keys=True, data=True))
-    if not edges:
-        edges = list(road_graph.in_edges(near_node, keys=True, data=True))
-
-    if not edges:
+    if road_graph.number_of_edges() == 0:
         return jsonify(success=False, error="No road segment found near this coordinate."), 400
-
-    u, v, key, data = edges[0]
-    incident_id = f"inc_{int(time.time()*1000)}"
+    u, v, key = ox.distance.nearest_edges(road_graph, lon, lat)
+    data = road_graph[u][v][key]
+    n_lat, n_lon = float(road_graph.nodes[u]["y"]), float(road_graph.nodes[u]["x"])
+    incident_id = f"inc_{uuid4().hex}"
 
     geom = data.get("geometry")
-    if geom:
+    if geom is not None:
         line_coords = [[float(y), float(x)] for x, y in list(geom.coords)]
     else:
         line_coords = [
@@ -490,10 +495,11 @@ def add_incident():
 
     affected_edges = [(u, v, key)]
     if incident_type == "roadblock":
+        affected_edges = [(u, v, k) for k in road_graph[u][v]]
         if road_graph.has_edge(v, u):
             for r_key in road_graph[v][u]:
                 affected_edges.append((v, u, r_key))
-        penalty = float("inf")
+        penalty = None  # Closure is represented by blocked edges; JSON must stay finite.
     elif incident_type == "accident":
         penalty = 3.5
     elif incident_type == "congestion":

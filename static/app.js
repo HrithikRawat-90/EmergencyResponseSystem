@@ -46,6 +46,9 @@
       animationTimer: null,
       animationPaused: false,
       animSpeed: 1.0,
+      showSearch: true,
+      autoReplan: true,
+      searchComplete: false,
       routeRequestId: 0,
       latestResult: null,
       replanCount: 0,
@@ -136,6 +139,7 @@
       state[isStart ? "startLandmarkId" : "destLandmarkId"] = landmarkId;
       byId(isStart ? "start-landmark-select" : "dest-landmark-select").value = landmarkId;
       state.targetSetting = !state.start ? "start" : !state.destination ? "destination" : (isStart ? "destination" : "start");
+      updateDetails();
       byId("deck-instruction").textContent = state.start && state.destination
         ? "Waypoints ready. Calculate a route to begin exploring."
         : `Choose a ${state.start ? "destination" : "start"} on the map or from the menu.`;
@@ -182,8 +186,9 @@
       byId("summary-progress").textContent = "Choose points, then calculate a route.";
       byId("ops-status-text").textContent = "Ready · Select start and destination";
       byId("deck-instruction").textContent = "Choose two points, then calculate a route.";
+      state.searchComplete = false;
+      updateDetails();
       byId("turn-steps-list").textContent = "Route directions will appear after exploration finishes.";
-      byId("tactical-briefing-box").hidden = true;
     }
 
     function updateLiveSummary(metrics, algorithm, message) {
@@ -271,11 +276,12 @@
       ++state.routeRequestId;
       clearRouteLayers();
       state.animationPaused = false;
+      state.searchComplete = false;
+      updateDetails();
       map.getContainer().classList.remove("playback-paused");
       byId("resume-playback-btn").textContent = "Pause";
       byId("resume-playback-btn").disabled = false;
       byId("replay-btn").disabled = false;
-      byId("tactical-briefing-box").hidden = true;
       byId("turn-steps-list").textContent = "Exploring roads. Directions appear when the route is found.";
       byId("deck-instruction").textContent = "Exploring roads from your selected start…";
       updateLiveSummary({distance_m: 0, duration_s: 0, nodes_expanded: 0}, data.algorithm, "Exploring · Current path from start");
@@ -284,21 +290,21 @@
       const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       const searchRenderer = L.canvas({ padding: 0.5 });
       const routeRenderer = L.svg({ padding: 0.5 });
-      state.spiderWebLayer = L.layerGroup().addTo(map);
+      state.spiderWebLayer = L.featureGroup().addTo(map);
       state.activeRouteLayer = L.featureGroup().addTo(map);
       // Share one canvas for the blue search branches and their endpoint dots.
       const settled = L.polyline([], {
         renderer: searchRenderer, color: "#0284c7", weight: 2,
-        opacity: 0.65, interactive: false, lineCap: "round",
+        opacity: state.showSearch ? 0.65 : 0, interactive: false, lineCap: "round",
       }).addTo(state.spiderWebLayer);
       const exploredDots = L.layerGroup().addTo(state.spiderWebLayer);
       const frontier = L.polyline([], {
         renderer: searchRenderer, color: "#0284c7", weight: 3,
-        opacity: 0.95, interactive: false, lineCap: "round",
+        opacity: state.showSearch ? 0.95 : 0, interactive: false, lineCap: "round",
       }).addTo(state.spiderWebLayer);
       const tip = L.circleMarker(data.start.snapped, {
         renderer: searchRenderer, radius: 3.5, weight: 1,
-        color: "#38bdf8", fillColor: "#7dd3fc", fillOpacity: 0.9,
+        color: "#38bdf8", fillColor: "#7dd3fc", fillOpacity: state.showSearch ? 0.9 : 0, opacity: state.showSearch ? 1 : 0,
         interactive: false,
       }).addTo(state.spiderWebLayer);
 
@@ -324,6 +330,8 @@
 
       function beginReveal() {
         phase = "reveal";
+        state.searchComplete = true;
+        updateDetails();
         updateSummaryUI(data);
         byId("summary-progress").textContent = "Route found · Final distance and estimated time";
         frontier.setLatLngs([]);
@@ -364,7 +372,7 @@
               accumulated.push(branch);
               L.circleMarker(branch[branch.length - 1], {
                 renderer: searchRenderer, radius: 2, color: "#38bdf8",
-                weight: 1, fillColor: "#7dd3fc", fillOpacity: 0.9,
+                weight: 1, fillColor: "#7dd3fc", fillOpacity: state.showSearch ? 0.9 : 0, opacity: state.showSearch ? 1 : 0,
                 interactive: false,
               }).addTo(exploredDots);
             }
@@ -395,7 +403,7 @@
             routeLayers.forEach(layer => layer.setLatLngs(visible));
             if (head && visible.length) head.setLatLng(visible[visible.length - 1]);
             // Keep search context as the path emerges, then fade it in the same clock.
-            settled.setStyle({ opacity: 0.65 * (1 - progress) });
+            settled.setStyle({ opacity: state.showSearch ? 0.65 * (1 - progress) : 0 });
             if (progress === 1) {
               map.removeLayer(state.spiderWebLayer);
               state.spiderWebLayer = null;
@@ -417,7 +425,6 @@
               }
               setStatus(`Route Active · ${(data.distance_m / 1000).toFixed(2)} km (${data.algorithm})`);
               state.animationTimer = null;
-              requestAIBriefing(data);
               return;
             }
           }
@@ -428,42 +435,6 @@
       state.spiderWebLayer.on("remove", () => map.removeLayer(searchRenderer));
       state.activeRouteLayer.on("remove", () => map.removeLayer(routeRenderer));
       state.animationTimer = requestAnimationFrame(frame);
-    }
-
-    // AI Briefing Request
-    async function requestAIBriefing(data) {
-      const requestId = state.routeRequestId;
-      const box = byId("tactical-briefing-box");
-      const content = byId("ai-briefing-content");
-      const spinner = byId("ai-loading-spinner");
-
-      box.hidden = false;
-      content.textContent = "Analyzing route logistics and tactical priorities...";
-      spinner.hidden = false;
-
-      try {
-        const res = await fetch("/api/ai/analyze-route", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            algorithm: data.algorithm,
-            distance_m: data.distance_m,
-            duration_s: data.duration_s,
-            incidents_count: state.activeIncidents.length,
-            nodes_expanded: data.nodes_expanded,
-            unit_type: byId("select-vehicle").value,
-          }),
-        });
-
-        const aiData = await res.json();
-        if (requestId !== state.routeRequestId) return;
-        content.textContent = aiData.analysis || "Tactical assessment completed.";
-      } catch {
-        if (requestId !== state.routeRequestId) return;
-        content.textContent = "AI tactical assessment is temporarily unavailable.";
-      } finally {
-        if (requestId === state.routeRequestId) spinner.hidden = true;
-      }
     }
 
     // Benchmark Modal
@@ -519,6 +490,36 @@
       }
     }
 
+    function updateDetails() {
+      for (const kind of ["start", "destination"]) {
+        const point = state[kind];
+        byId(`details-${kind}`).textContent = point ? `${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}` : "Not selected";
+      }
+      byId("details-objective").textContent = byId("select-objective").selectedOptions[0].textContent;
+      byId("details-result").textContent = state.searchComplete && state.latestResult
+        ? `${state.latestResult.edges_considered.toLocaleString()} road edges considered · ${state.latestResult.execution_time_ms} ms computation. ${state.latestResult.notes || ""}`
+        : state.latestResult ? "Exploration in progress. Final search details appear when it finishes."
+        : "Choose points and calculate a route to see search details.";
+    }
+
+    function replanAfterIncident() {
+      if (state.autoReplan && state.start && state.destination) {
+        state.replanCount++;
+        computeRoute();
+      } else if (state.latestResult) {
+        resetRoute();
+        byId("deck-instruction").textContent = "Incidents changed. Calculate a route to use the updated roads.";
+      }
+    }
+
+    function setIncidentPlacement(active) {
+      state.placingIncident = active;
+      byId("place-incident-btn").textContent = active ? "Cancel placement" : "+ Place Hazard on Map";
+      byId("place-incident-btn").setAttribute("aria-pressed", String(active));
+      map.getContainer().classList.toggle("placing-incident", active);
+      byId("incident-status").textContent = active ? "Click a road inside the sector to place the incident." : `${state.activeIncidents.length} active incidents.`;
+    }
+
     // Hazard Simulation
     async function placeHazard(latlng) {
       try {
@@ -541,10 +542,9 @@
 
         state.activeIncidents.push(data.incident);
         renderHazards();
-        showToast(`Added ${state.incidentType}: ${data.incident.road_name}`);
+        showToast(`Added ${data.incident.type}: ${data.incident.road_name}`);
 
-        state.replanCount += 1;
-        computeRoute();
+        replanAfterIncident();
       } catch {
         showToast("Failed to place hazard.");
       }
@@ -558,6 +558,7 @@
       if (!container) return;
       container.innerHTML = "";
 
+      byId("incident-status").textContent = state.activeIncidents.length ? `${state.activeIncidents.length} active incidents.` : "No active incidents.";
       state.activeIncidents.forEach((inc) => {
         const color = inc.type === "roadblock" ? "#dc2626" : "#d97706";
         const line = L.polyline(inc.coordinates, {
@@ -567,15 +568,21 @@
           opacity: 0.9,
         }).addTo(map);
 
-        line.bindPopup(`<b>${inc.title}</b><br>${inc.road_name}`);
+        const popup = document.createElement("div");
+        popup.textContent = `${inc.title}: ${inc.road_name}`;
+        line.bindPopup(popup);
         state.incidentLayers.push(line);
 
         const chip = document.createElement("div");
         chip.className = "hazard-chip";
-        chip.innerHTML = `
-          <span>${inc.type.toUpperCase()}: ${inc.road_name.slice(0, 16)}</span>
-          <button data-id="${inc.id}" title="Remove">&times;</button>
-        `;
+        const label = document.createElement("span");
+        label.textContent = `${inc.type.toUpperCase()}: ${inc.road_name}`;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.dataset.id = inc.id;
+        remove.setAttribute("aria-label", `Remove ${inc.type} on ${inc.road_name}`);
+        remove.textContent = "×";
+        chip.append(label, remove);
         container.appendChild(chip);
       });
     }
@@ -598,19 +605,6 @@
     byId("dest-landmark-select").addEventListener("change", (e) => {
       if (LANDMARKS[e.target.value]) setLandmark("destination", e.target.value);
       else state.targetSetting = "destination";
-    });
-
-    document.querySelectorAll(".landmark-item").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.dataset.id;
-        if (state.startLandmarkId === id) {
-          showToast(`${btn.querySelector('.landmark-name').textContent} is already the start point.`);
-          return;
-        }
-        const kind = state.targetSetting;
-        setLandmark(kind, id);
-        showToast(`${kind === "start" ? "Start" : "Destination"}: ${btn.querySelector('.landmark-name').textContent}`);
-      });
     });
 
     // Map Controls
@@ -636,6 +630,8 @@
       byId("dest-landmark-select").value = "";
       state.targetSetting = "start";
       state.replanCount = 0;
+      setIncidentPlacement(false);
+      updateDetails();
       byId("summary-replans").textContent = "0";
     });
 
@@ -657,6 +653,7 @@
     if (speedSelect) {
       speedSelect.addEventListener("change", (e) => {
         state.animSpeed = parseFloat(e.target.value) || 1.0;
+        byId("settings-speed-select").value = e.target.value;
         showToast(`Animation speed: ${state.animSpeed}x`);
       });
     }
@@ -688,20 +685,55 @@
       });
     });
 
+    const rightTabs = ["route", "details", "settings"];
+    rightTabs.forEach(name => {
+      const button = byId(`tab-right-${name}`);
+      button.setAttribute("aria-controls", `tabpanel-right-${name}`);
+      button.setAttribute("aria-expanded", String(name === "route"));
+      button.addEventListener("click", () => {
+        rightTabs.forEach(other => {
+          byId(`tab-right-${other}`).classList.toggle("is-active", other === name);
+          byId(`tab-right-${other}`).setAttribute("aria-expanded", String(other === name));
+          byId(`tabpanel-right-${other}`).hidden = other !== name;
+        });
+        updateDetails();
+      });
+    });
+    byId("select-objective").addEventListener("change", updateDetails);
+    byId("settings-speed-select").addEventListener("change", e => {
+      speedSelect.value = e.target.value;
+      speedSelect.dispatchEvent(new Event("change"));
+    });
+    byId("show-search-toggle").addEventListener("change", e => {
+      state.showSearch = e.target.checked;
+      function applyVisibility(layer) {
+        if (layer.setStyle) layer.setStyle({opacity: state.showSearch ? 0.65 : 0, fillOpacity: state.showSearch ? 0.9 : 0});
+        if (layer.eachLayer) layer.eachLayer(applyVisibility);
+      }
+      if (state.spiderWebLayer) applyVisibility(state.spiderWebLayer);
+    });
+    byId("auto-replan-toggle").addEventListener("change", e => {
+      state.autoReplan = e.target.checked;
+    });
+
     // Navigation Strip
     byId("nav-btn-traffic").addEventListener("click", () => {
+      byId("tab-action-route").click();
       const panel = byId("traffic-hazard-panel");
       panel.hidden = !panel.hidden;
       byId("nav-btn-traffic").classList.toggle("is-active", !panel.hidden);
+      byId("nav-btn-route").classList.toggle("is-active", panel.hidden);
+      if (panel.hidden) setIncidentPlacement(false);
     });
 
     byId("nav-btn-route").addEventListener("click", () => {
+      byId("tab-action-route").click();
+      setIncidentPlacement(false);
       byId("nav-btn-route").classList.add("is-active");
       byId("nav-btn-traffic").classList.remove("is-active");
       byId("traffic-hazard-panel").hidden = true;
     });
 
-    byId("nav-btn-settings").addEventListener("click", runBenchmark);
     byId("nav-btn-navigate").addEventListener("click", () => {
       map.fitBounds(studyBounds, { padding: [30, 30] });
     });
@@ -716,46 +748,44 @@
     });
 
     byId("place-incident-btn").addEventListener("click", () => {
-      state.placingIncident = !state.placingIncident;
-      byId("place-incident-btn").textContent = state.placingIncident ? "Click Road on Map..." : "+ Place Hazard on Map";
-      if (state.placingIncident) {
-        showToast("Click on any road segment to drop simulated obstacle.");
-      }
+      setIncidentPlacement(!state.placingIncident);
     });
 
     byId("clear-all-hazards-btn").addEventListener("click", async () => {
-      await fetch("/api/incidents/clear", { method: "POST" });
-      state.activeIncidents = [];
-      renderHazards();
-      state.replanCount = 0;
-      byId("summary-replans").textContent = "0";
-      computeRoute();
+      try {
+        const res = await fetch("/api/incidents/clear", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || "Could not clear incidents.");
+        state.activeIncidents = [];
+        setIncidentPlacement(false);
+        renderHazards();
+        replanAfterIncident();
+      } catch (error) { showToast(error.message); }
     });
 
-    const hazardsList = byId("hazards-list");
-    if (hazardsList) {
-      hazardsList.addEventListener("click", async (e) => {
-        if (e.target.tagName === "BUTTON") {
-          const id = e.target.dataset.id;
-          await fetch(`/api/incidents/${id}`, { method: "DELETE" });
-          state.activeIncidents = state.activeIncidents.filter((i) => i.id !== id);
-          renderHazards();
-          computeRoute();
-        }
-      });
-    }
+    byId("hazards-list").addEventListener("click", async e => {
+      const button = e.target.closest("button[data-id]");
+      if (!button) return;
+      try {
+        const res = await fetch(`/api/incidents/${button.dataset.id}`, { method: "DELETE" });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || "Could not remove incident.");
+        state.activeIncidents = state.activeIncidents.filter(i => i.id !== button.dataset.id);
+        renderHazards();
+        replanAfterIncident();
+      } catch (error) { showToast(error.message); }
+    });
 
     // Map Click
     map.on("click", (e) => {
-      if (state.placingIncident) {
-        placeHazard(e.latlng);
-        state.placingIncident = false;
-        byId("place-incident-btn").textContent = "+ Place Hazard on Map";
+      if (!studyBounds.contains(e.latlng)) {
+        showToast("Click inside the Dehradun rescue sector boundary.");
         return;
       }
 
-      if (!studyBounds.contains(e.latlng)) {
-        showToast("Click inside the Dehradun rescue sector boundary.");
+      if (state.placingIncident) {
+        setIncidentPlacement(false);
+        placeHazard(e.latlng);
         return;
       }
 
@@ -769,6 +799,10 @@
     });
 
     resetRoute();
+    fetch("/api/incidents").then(res => res.json()).then(data => {
+      state.activeIncidents = data.incidents || [];
+      renderHazards();
+    }).catch(() => showToast("Could not load existing incidents."));
   }
 
   // DOM Ready
