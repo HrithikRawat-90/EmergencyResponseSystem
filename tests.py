@@ -18,6 +18,7 @@ from unittest.mock import patch
 import networkx as nx
 
 import algorithms
+import vehicle_profiles
 import app
 
 
@@ -136,6 +137,67 @@ class TestAlgorithms(unittest.TestCase):
         # Safest route evaluates highway safety factors
         res = algorithms.dijkstra_search(self.g, start_node=1, dest_node=4, objective="safety")
         self.assertTrue(res["found"])
+
+
+class TestVehicleProfiles(unittest.TestCase):
+    def setUp(self):
+        self.graph = nx.MultiDiGraph()
+        for node, lat, lon in [(1, 30.3165, 78.0322), (2, 30.3170, 78.0322),
+                               (3, 30.3165, 78.0327), (4, 30.3170, 78.0327)]:
+            self.graph.add_node(node, y=lat, x=lon)
+        self.graph.add_edge(1, 2, key=0, length=60, highway="service", maxspeed="30")
+        self.graph.add_edge(2, 4, key=0, length=60, highway="service", maxspeed="30")
+        self.graph.add_edge(1, 3, key=0, length=90, highway="primary", maxspeed="30")
+        self.graph.add_edge(3, 4, key=0, length=90, highway="primary", maxspeed="30")
+
+    def test_fire_profile_prefers_major_roads_without_mutating_base(self):
+        paths = {}
+        times = {}
+        for unit in vehicle_profiles.PROFILES:
+            graph = vehicle_profiles.prepare_graph(self.graph, unit, {})
+            result = algorithms.run_algorithm(graph, "dijkstra", 1, 4, "time")
+            paths[unit] = result["path_nodes"]
+            times[unit] = result["duration_s"]
+            astar = algorithms.run_algorithm(graph, "a*", 1, 4, "time")
+            self.assertEqual(astar["path_nodes"], result["path_nodes"])
+        self.assertEqual(paths["fire"], [1, 3, 4])
+        self.assertEqual(paths["ambulance"], [1, 2, 4])
+        self.assertLess(times["police"], times["ambulance"])
+        self.assertGreater(times["fire"], times["ambulance"])
+        self.assertNotIn("vehicle_speed_factor", self.graph[1][2][0])
+
+    def test_profile_incidents_and_api_journey_segments(self):
+        from shapely.geometry import LineString
+        self.graph[1][2][0]["geometry"] = LineString([(78.0322, 30.3170), (78.0322, 30.3165)])
+        nodes = [(n, d["y"], d["x"]) for n, d in self.graph.nodes(data=True)]
+        with patch.object(app, "road_graph", self.graph), patch.object(app, "_node_cache", nodes), \
+             patch.object(app, "_blocked_edges", set()), patch.object(app, "_incident_penalties", {(1, 2, 0): 1.5}):
+            client = app.app.test_client()
+            payload = {"start": [30.3165, 78.0322], "destination": [30.3170, 78.0327],
+                       "algorithm": "dijkstra", "objective": "length", "unit_type": "ambulance"}
+            data = client.post("/api/route", json=payload).get_json()
+            self.assertTrue(data["success"])
+            self.assertEqual(data["unit_type"], "ambulance")
+            self.assertTrue(data["vehicle_profile"]["simulated"])
+            legs = data["journey_segments"]
+            self.assertEqual(legs[0]["geometry"][0], data["start"]["snapped"])
+            self.assertEqual(legs[-1]["geometry"][-1], data["destination"]["snapped"])
+            self.assertAlmostEqual(sum(leg["duration_s"] for leg in legs), data["duration_s"], delta=0.1)
+            self.assertEqual(sum(leg["distance_m"] for leg in legs), data["distance_m"])
+            self.assertEqual(legs[0]["incident_multiplier"], 1.5)
+            self.assertEqual(legs[0]["edge"], ["1", "2", 0])
+            compared = client.post("/api/compare", json=payload).get_json()
+            dijkstra = next(item for item in compared["comparisons"] if item["algorithm"] == "Dijkstra")
+            self.assertEqual(dijkstra["duration_s"], data["duration_s"])
+            payload["unit_type"] = "invalid"
+            self.assertEqual(client.post("/api/route", json=payload).status_code, 400)
+            self.assertEqual(client.post("/api/compare", json=payload).status_code, 400)
+            payload["unit_type"] = "fire"
+            payload["destination"] = payload["start"]
+            same = client.post("/api/route", json=payload).get_json()
+            self.assertEqual(same["journey_segments"], [])
+            self.assertEqual(same["route_geometry"], [same["start"]["snapped"]])
+            self.assertEqual(same["duration_s"], 0)
 
 
 class TestFlaskAPI(unittest.TestCase):

@@ -86,9 +86,12 @@ def get_edge_weight(
             speed_kph = 25.0
 
     speed_mps = max(speed_kph * (1000.0 / 3600.0), 1.0)
+    speed_mps = min(speed_mps * data.get("vehicle_speed_factor", 1.0),
+                    data.get("vehicle_max_speed_mps", float("inf")))
+    road_delay = data.get("vehicle_road_delay", 1.0)
 
     if objective == "time":
-        base_cost = length / speed_mps
+        base_cost = length / speed_mps * road_delay
     elif objective == "traffic":
         # Traffic-aware: penalizes lower-class roads that are more congestion-prone
         # Major arterials assumed to have better traffic flow; residential streets penalized
@@ -117,6 +120,9 @@ def get_edge_weight(
     else:
         # Default: distance objective (shortest path by meters)
         base_cost = length
+
+    if objective in ("traffic", "safety"):
+        base_cost *= road_delay
 
     # Apply simulated incident penalty if present (multiplier)
     if incident_penalties:
@@ -155,7 +161,7 @@ def calculate_route_metrics(graph, path_edges: List[Tuple[Any, Any, Any]], *, ro
             total_length += l
             time_cost = get_edge_weight(u, v, key, data, objective="time")
             if time_cost:
-                total_duration += time_cost
+                total_duration += time_cost * data.get("incident_metric_factor", 1.0)
             else:
                 total_duration += l / 8.33  # ~30 km/h fallback
     return {
@@ -534,7 +540,7 @@ def a_star_search(
     dest_lon = float(graph.nodes[dest_node]["x"])
 
     # Max speed in m/s for time heuristic admissibility (e.g., 60 km/h = 16.67 m/s)
-    max_speed_mps = 16.67
+    max_speed_mps = graph.graph.get("vehicle_max_speed_mps", 16.67)
 
     def heuristic(node: Any) -> float:
         node_lat = float(graph.nodes[node]["y"])

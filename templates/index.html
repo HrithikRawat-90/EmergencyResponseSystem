@@ -690,10 +690,22 @@ body.app-body {
 .graph-mode .clean-circle-marker > div { background: #f35c52 !important; border-color: #ffc4bc !important; box-shadow: 0 0 8px #ff655e, 0 0 20px #ff655e88 !important; }
 .graph-mode .clean-circle-marker.graph-destination > div { background: #23cf8c !important; border-color: #b3ffe0 !important; box-shadow: 0 0 8px #25e49a, 0 0 20px #25e49a88 !important; }
 @media (max-width: 600px) { .graph-caption { right: 12px; bottom: 22px; } .graph-caption span { max-width: 145px; } .graph-legend { left: 12px; font-size: 10px; } }
+.btn-primary-green:disabled { opacity: 0.45; cursor: default; }
+.journey-panel { margin: 16px 0; padding: 18px; border: 1px solid #cfe2da; border-radius: 12px; background: #f5faf8; }
+.journey-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; font-size: 14px; }
+#journey-status { color: #326d5c; font-size: 12px; }
+.journey-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 14px; margin: 12px 0; }
+.journey-stats div { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.journey-stats span { color: var(--text-secondary); font-size: 11px; }
+.journey-progress-row { display: flex; gap: 12px; align-items: center; font-size: 12px; }
+#journey-progress { flex: 1; height: 9px; accent-color: #238775; }
+.journey-vehicle span { width: 40px; height: 40px; display: grid; place-items: center; background: #fff; border: 3px solid var(--vehicle-color); border-radius: 50%; box-shadow: 0 2px 12px #0005; font-size: 23px; }
+.graph-mode .journey-vehicle span { box-shadow: 0 0 14px var(--vehicle-color); }
 </style>
   <script>window.APP_CONFIG = {{ app_config | tojson }};</script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script defer src="{{ url_for('static', filename='graph-view.js') }}?v={{ cache_buster }}"></script>
+  <script defer src="{{ url_for('static', filename='journey.js') }}?v={{ cache_buster }}"></script>
   <script defer src="{{ url_for('static', filename='app.js') }}?v={{ cache_buster }}"></script>
 </head>
 <body class="app-body">
@@ -831,6 +843,30 @@ body.app-body {
                 <button id="benchmark-modal-btn" class="btn-outline-subtle" type="button">Benchmark 4</button>
               </div>
 
+              <section id="journey-panel" class="journey-panel" data-phase="idle" hidden aria-label="Vehicle dispatch simulation">
+                <div class="journey-heading"><strong id="journey-vehicle-label">Vehicle dispatch</strong><span id="journey-status" role="status">Awaiting route</span></div>
+                <p id="journey-profile" class="form-help-text"></p>
+                <div class="deck-actions-bar">
+                  <button id="begin-dispatch-btn" class="btn-primary-green" type="button" disabled>Dispatch vehicle</button>
+                  <button id="journey-pause-btn" class="btn-outline-subtle" type="button" disabled>Pause journey</button>
+                  <button id="cancel-dispatch-btn" class="btn-outline-subtle" type="button" disabled>Cancel dispatch</button>
+                  <button id="retry-dispatch-btn" class="btn-outline-subtle" type="button" hidden>Retry route</button>
+                  <label class="speed-selector-group">Travel simulation
+                    <select id="journey-speed-select" class="speed-select" aria-label="Vehicle simulation speed">
+                      <option value="10">10×</option><option value="30" selected>30×</option><option value="60">60×</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="journey-stats">
+                  <div><span>Distance remaining</span><strong id="journey-remaining">—</strong></div>
+                  <div><span>Estimated arrival</span><strong id="journey-eta">—</strong></div>
+                  <div><span>Distance travelled</span><strong id="journey-travelled">—</strong></div>
+                  <div><span>Simulated elapsed</span><strong id="journey-elapsed">—</strong></div>
+                </div>
+                <div class="journey-progress-row"><progress id="journey-progress" max="100" value="0" aria-label="Journey progress"></progress><span id="journey-progress-text">0%</span></div>
+                <p class="form-help-text">Vehicle speeds and road preferences are educational simulation assumptions. Travel playback has its own speed control.</p>
+              </section>
+
               <!-- Simulated Traffic / Hazard Drawer (Activated via Traffic Nav tab) -->
               <div id="traffic-hazard-panel" class="hazard-drawer" hidden>
                 <div class="hazard-header">
@@ -868,21 +904,21 @@ body.app-body {
                   <span class="unit-dot green"></span>
                   <div>
                     <strong>Ambulance-1 (EMS)</strong>
-                    <small>Sector Central &middot; Available</small>
+                    <small id="unit-status-ambulance">Available</small>
                   </div>
                 </div>
                 <div class="unit-card-item">
                   <span class="unit-dot orange"></span>
                   <div>
                     <strong>Fire Engine-3 (Rescue)</strong>
-                    <small>Station Station &middot; Standby</small>
+                    <small id="unit-status-fire">Available</small>
                   </div>
                 </div>
                 <div class="unit-card-item">
                   <span class="unit-dot blue"></span>
                   <div>
                     <strong>Police Patrol-7 (Traffic)</strong>
-                    <small>Clock Tower &middot; On Patrol</small>
+                    <small id="unit-status-police">Available</small>
                   </div>
                 </div>
               </div>
@@ -956,6 +992,7 @@ body.app-body {
               </div>
             </div>
 
+            <p class="form-help-text" id="vehicle-profile-info">Vehicle profiles simulate different speeds and road-class delays.</p>
             <p class="form-help-text">
               Blocked roads are excluded. Traffic and accident penalties follow the selected objective.
             </p>

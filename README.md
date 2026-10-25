@@ -100,6 +100,19 @@ Click **Benchmark 4** to launch the comparison modal. It runs BFS, DFS, Dijkstra
 
 ---
 
+## Dispatch a Vehicle After Finding a Route
+
+1. Choose Ambulance, Fire Brigade, or Police, then select both waypoints and calculate the route.
+2. Wait for exploration and the route reveal to finish. Click **Dispatch vehicle** in the journey panel.
+3. Watch the selected unit follow the road with live distance remaining, estimated arrival, distance travelled, simulated elapsed time and progress.
+4. Use **Pause journey**, **Resume journey**, **Cancel dispatch**, and the separate **Travel simulation** speed (10×, 30× or 60×). The existing animation speed controls algorithm playback.
+5. Add an incident during travel. Automatic replanning keeps the vehicle position and continues via its next junction. If the road currently occupied is closed, the unit waits until the closure is removed. With automatic replanning off, use **Retry route** to continue.
+6. Arrival shows **Mission completed**; the Units tab reflects the selected unit's status. Clear resets the mission and endpoints. Changing routing parameters cancels the existing plan so the next dispatch uses the correct profile.
+
+Vehicle profiles are educational assumptions: the fire brigade is slower and incurs larger delays on local/service roads; ambulance and police profiles have different speed caps and service-road delays. Weighted routing and ETA use these profiles and simulated incidents. Minimum-distance routing still minimizes physical distance, and BFS/DFS preserve their algorithm behavior. There are no live driving/clearance guarantees. Profile constants are in `vehicle_profiles.py`.
+
+---
+
 ## Running the Automated Test Suite
 
 To run all unit tests:

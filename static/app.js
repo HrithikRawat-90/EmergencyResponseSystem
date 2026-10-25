@@ -94,6 +94,7 @@
       contextUrl: config.graph_context_url || "/api/graph-context", workingBounds: config.bounds, getState: () => state,
       onProgress: updateLiveSummary,
       onStatus: text => { byId("ops-status-text").textContent = text; },
+      onComplete: data => journey.prepare(data),
       onFound: data => {
         state.searchComplete = true;
         updateDetails(); updateSummaryUI(data);
@@ -102,6 +103,32 @@
     });
 
     const workingNodes = window.createWorkingNodesOverlay({map, url: "/api/nodes"});
+
+    const journey = window.createDispatchSimulation({
+      map,
+      onStatus: text => { byId("ops-status-text").textContent = text; },
+      onChange: phase => {
+        const active = ["running", "paused", "waiting", "replanning"].includes(phase);
+        byId("replay-btn").disabled = active || !state.latestResult;
+        if (active || phase === "completed") byId("resume-playback-btn").disabled = true;
+      },
+      requestRoute: async (start, previous) => {
+        state.replanCount++;
+        const response = await fetch("/api/route", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({start, destination: previous.destination.snapped,
+            algorithm: previous.algorithm, objective: previous.objective, unit_type: previous.unit_type}),
+        });
+        return response.json();
+      },
+      onCancel: () => resetRoute(),
+      onReplanned: data => {
+        clearRouteLayers();
+        state.latestResult = data; state.searchComplete = true;
+        updateDetails(); updateSummaryUI(data);
+      },
+    });
+    byId("retry-dispatch-btn").addEventListener("click", () => journey.replan(state.activeIncidents));
 
     // Multiple invalidation calls to guarantee map dimensions render properly
     setTimeout(() => map.invalidateSize(), 100);
@@ -196,9 +223,11 @@
     }
 
     function resetRoute() {
+      journey.clear();
       ++state.routeRequestId;
       clearRouteLayers();
       state.latestResult = null;
+      byId("vehicle-profile-info").textContent = config.vehicle_profiles?.[byId("select-vehicle").value]?.description || "Vehicle profiles simulate different speeds and road-class delays.";
       state.animationPaused = false;
       map.getContainer().classList.remove("playback-paused");
       byId("resume-playback-btn").textContent = "Pause";
@@ -273,6 +302,7 @@
 
     // Update Metrics in UI
     function updateSummaryUI(data) {
+      if (data.vehicle_profile) byId("vehicle-profile-info").textContent = data.vehicle_profile.description;
       byId("summary-distance").textContent = `${(data.distance_m / 1000).toFixed(2)} km`;
       byId("summary-time").textContent = `${(data.duration_s / 60).toFixed(1)} min`;
       byId("summary-nodes").textContent = data.nodes_expanded.toLocaleString();
@@ -296,6 +326,7 @@
 
     // Graph playback is separate; the original real-map animation below is unchanged.
     function startRoutePlayback(data) {
+      journey.clear();
       if (state.viewMode === "map") return startSpiderWebAnimation(data);
       ++state.routeRequestId;
       clearRouteLayers();
@@ -466,6 +497,7 @@
               }
               setStatus(`Route Active · ${(data.distance_m / 1000).toFixed(2)} km (${data.algorithm})`);
               state.animationTimer = null;
+              journey.prepare(data);
               return;
             }
           }
@@ -494,6 +526,7 @@
             start: [state.start.lat, state.start.lng],
             destination: [state.destination.lat, state.destination.lng],
             objective: objective,
+            unit_type: byId("select-vehicle").value,
           }),
         });
 
@@ -544,6 +577,12 @@
     }
 
     function replanAfterIncident() {
+      if (journey.active()) {
+        clearRouteLayers();
+        if (state.autoReplan) journey.replan(state.activeIncidents);
+        else journey.invalidate();
+        return;
+      }
       if (state.autoReplan && state.start && state.destination) {
         state.replanCount++;
         computeRoute();
@@ -747,6 +786,11 @@
       speedSelect.value = e.target.value;
       speedSelect.dispatchEvent(new Event("change"));
     });
+    ["select-vehicle", "algorithm-select", "select-objective"].forEach(id => {
+      byId(id).addEventListener("change", () => {
+        resetRoute();
+      });
+    });
     byId("show-search-toggle").addEventListener("change", e => {
       state.showSearch = e.target.checked;
       function applyVisibility(layer) {
@@ -794,7 +838,7 @@
       try {
         await graphView.setVisible(graph);
         // Replay the same response in the selected renderer; never request a new route.
-        if (saved && state.latestResult === saved) {
+        if (saved && state.latestResult === saved && !journey.hasMission()) {
           startRoutePlayback(saved);
           if (paused) byId("resume-playback-btn").click();
         }

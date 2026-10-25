@@ -76,7 +76,7 @@
     };
   };
 
-  window.createGraphView = ({map, url, contextUrl, workingBounds, getState, onProgress, onFound, onStatus}) => {
+  window.createGraphView = ({map, url, contextUrl, workingBounds, getState, onProgress, onFound, onComplete, onStatus}) => {
     const colors = {Dijkstra: "#00c9ff", "A*": "#c481ff", BFS: "#42aeff", DFS: "#f078ce"};
     let roads = [], projected = [], adjacency = new Map(), loading = null;
     let worlds = [], surroundings = [], contextLoading = null;
@@ -341,6 +341,7 @@
             if (routeProgress === 1) {
               phase = "complete"; draw(); timer = null;
               onStatus(`Route Active · ${(data.distance_m / 1000).toFixed(2)} km (${data.algorithm})`);
+              onComplete(data);
               return;
             }
           }

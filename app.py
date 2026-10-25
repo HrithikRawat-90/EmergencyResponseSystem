@@ -26,6 +26,7 @@ import osmnx as ox
 
 import algorithms
 import graph_context
+import vehicle_profiles
 
 # Optional Gemini API Rotator integration (internal backend only, NEVER exposed in UI)
 gemini_rotator = None
@@ -206,6 +207,8 @@ def extract_route_geometry(graph: nx.MultiDiGraph, path_edges: List[Tuple[Any, A
                 [float(graph.nodes[u]["y"]), float(graph.nodes[u]["x"])],
                 [float(graph.nodes[v]["y"]), float(graph.nodes[v]["x"])],
             ]
+        if coords and algorithms.haversine_distance_m(*coords[-1], float(graph.nodes[u]["y"]), float(graph.nodes[u]["x"])) < algorithms.haversine_distance_m(*coords[0], float(graph.nodes[u]["y"]), float(graph.nodes[u]["x"])):
+            coords.reverse()
         if latlngs and coords:
             latlngs.extend(coords[1:])
         else:
@@ -255,6 +258,7 @@ def index():
             "bounds": BOUNDS,
             "graph_url": url_for("graph_data"),
             "graph_context_url": url_for("graph_context_data"),
+            "vehicle_profiles": {name: vehicle_profiles.public_profile(name) for name in vehicle_profiles.PROFILES},
         },
     )
 
@@ -320,6 +324,9 @@ def calculate_route():
     dest_coords = payload.get("destination")
     algorithm_name = payload.get("algorithm", "a*")
     objective = payload.get("objective", "length")
+    unit_type = payload.get("unit_type", "ambulance")
+    if not isinstance(unit_type, str) or unit_type not in vehicle_profiles.PROFILES:
+        return jsonify(success=False, error="Choose ambulance, fire, or police."), 400
 
     if not start_coords or not dest_coords or len(start_coords) != 2 or len(dest_coords) != 2:
         return jsonify(success=False, error="Both start and destination [lat, lon] must be provided."), 400
@@ -348,9 +355,10 @@ def calculate_route():
     s_node, s_snap_lat, s_snap_lon, s_snap_dist = snap_coordinate_to_node(s_lat, s_lon)
     d_node, d_snap_lat, d_snap_lon, d_snap_dist = snap_coordinate_to_node(d_lat, d_lon)
 
+    profile_graph = vehicle_profiles.prepare_graph(road_graph, unit_type, _incident_penalties)
     try:
         result = algorithms.run_algorithm(
-            graph=road_graph,
+            graph=profile_graph,
             algorithm=algorithm_name,
             start_node=s_node,
             dest_node=d_node,
@@ -377,6 +385,14 @@ def calculate_route():
 
     path_edges = result.get("path_edges", [])
     route_latlngs = extract_route_geometry(road_graph, path_edges)
+    if not route_latlngs:
+        route_latlngs = [[s_snap_lat, s_snap_lon]]
+    journey_segments = []
+    for u, v, key in path_edges:
+        metrics = algorithms.calculate_route_metrics(profile_graph, [(u, v, key)], rounded=False)
+        geometry = extract_route_geometry(road_graph, [(u, v, key)])
+        journey_segments.append({"edge": [str(u), str(v), int(key)], "geometry": geometry,
+                                 "incident_multiplier": profile_graph[u][v][key].get("incident_metric_factor", 1), **metrics})
 
     visited_nodes = result.get("visited_nodes", [])
     visited_coords = [
@@ -398,6 +414,9 @@ def calculate_route():
         success=True,
         algorithm=result["algorithm"],
         objective=objective,
+        unit_type=unit_type,
+        vehicle_profile=vehicle_profiles.public_profile(unit_type),
+        journey_segments=journey_segments,
         start={
             "original": [s_lat, s_lon],
             "snapped": [s_snap_lat, s_snap_lon],
@@ -438,6 +457,10 @@ def compare_algorithms():
     start_coords = payload.get("start")
     dest_coords = payload.get("destination")
     objective = payload.get("objective", "length")
+    unit_type = payload.get("unit_type", "ambulance")
+    if not isinstance(unit_type, str) or unit_type not in vehicle_profiles.PROFILES:
+        return jsonify(success=False, error="Choose ambulance, fire, or police."), 400
+    profile_graph = vehicle_profiles.prepare_graph(road_graph, unit_type, _incident_penalties)
 
     if not start_coords or not dest_coords:
         return jsonify(success=False, error="Start and destination required."), 400
@@ -448,7 +471,7 @@ def compare_algorithms():
     comparisons = []
     for algo in ["a*", "dijkstra", "bfs", "dfs"]:
         res = algorithms.run_algorithm(
-            graph=road_graph,
+            graph=profile_graph,
             algorithm=algo,
             start_node=s_node,
             dest_node=d_node,
