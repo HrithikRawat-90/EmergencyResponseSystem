@@ -1,0 +1,1 @@
+Read PROJECT_SUMMARY.md first for the compact project map and current coverage settings. Read only the source sections relevant to the requested change, and update the summary when behavior or architecture changes.

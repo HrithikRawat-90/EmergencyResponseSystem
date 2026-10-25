@@ -11,6 +11,7 @@ Tests:
 """
 
 import unittest
+from unittest.mock import patch
 import networkx as nx
 
 import algorithms
@@ -47,6 +48,19 @@ class TestAlgorithms(unittest.TestCase):
         self.assertTrue(res["found"])
         self.assertEqual(res["path_nodes"], [1, 3, 4])
         self.assertEqual(res["distance_m"], 110.0)
+
+    def test_routes_beyond_original_search_limit(self):
+        """Expanded coverage must not truncate searches at the old 5,000 nodes."""
+        graph = nx.MultiDiGraph()
+        for node in range(5_010):
+            graph.add_node(node, y=30.3, x=78.0 + node * 0.000001)
+            if node:
+                graph.add_edge(node - 1, node, length=1.0)
+        for name in ("bfs", "dfs", "dijkstra", "a*"):
+            with self.subTest(algorithm=name):
+                result = algorithms.run_algorithm(graph, name, 0, 5_009)
+                self.assertTrue(result["found"])
+                self.assertEqual(result["distance_m"], 5_009)
 
     def test_a_star_agreement_with_dijkstra(self):
         res_dijkstra = algorithms.dijkstra_search(self.g, start_node=1, dest_node=4, objective="length")
@@ -115,11 +129,45 @@ class TestFlaskAPI(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn(b"EMERGENCY", res.data)
 
+    def test_animation_includes_search_beyond_600_edges(self):
+        graph = nx.MultiDiGraph()
+        for node in range(1_201):
+            graph.add_node(node, y=30.3165, x=78.02 + node * 0.00001)
+            if node:
+                graph.add_edge(node - 1, node, length=1.0)
+        nodes = [(n, d["y"], d["x"]) for n, d in graph.nodes(data=True)]
+        with patch.object(app, "road_graph", graph), patch.object(app, "_node_cache", nodes):
+            for algorithm in ("bfs", "dfs", "dijkstra", "a*"):
+                with self.subTest(algorithm=algorithm):
+                    response = self.client.post("/api/route", json={
+                        "start": [30.3165, 78.02],
+                        "destination": [30.3165, 78.032],
+                        "algorithm": algorithm,
+                    })
+                    data = response.get_json()
+                    self.assertTrue(data["success"])
+                    self.assertEqual(len(data["search_tree_edges"]), 1_200)
+                    self.assertEqual(len(data["visited_coords"]), 1_201)
+                    self.assertEqual(data["search_tree_edges"][-1][-1], data["destination"]["snapped"])
+
     def test_api_graph_route(self):
         res = self.client.get("/api/graph")
         self.assertEqual(res.status_code, 200)
         data = res.get_json()
         self.assertEqual(data.get("type"), "FeatureCollection")
+
+    def test_expanded_coverage(self):
+        self.assertGreaterEqual((app.DISTANCE_M / 1_500) ** 2, 5)
+        self.assertIn(f"{app.DISTANCE_M}m", app.CACHE_FILE.name)
+        # Outside the old 1.5 km half-width, inside the expanded western sector.
+        response = self.client.post("/api/route", json={
+            "start": [30.3165, 78.005],
+            "destination": [30.3165, 78.0322],
+            "algorithm": "dijkstra",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        self.assertLess(response.get_json()["start"]["snap_distance_m"], 500)
 
     def test_route_calculation_api(self):
         payload = {

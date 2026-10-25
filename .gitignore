@@ -1,0 +1,12 @@
+# Local Python environment
+/.venv/
+
+# Generated Python bytecode
+__pycache__/
+*.py[cod]
+
+# Generated download cache
+/cache/
+
+# Local API rotation state
+/key_state.json

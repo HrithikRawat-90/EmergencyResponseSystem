@@ -170,7 +170,7 @@ def breadth_first_search(
     dest_node: Any,
     blocked_edges: Optional[Set[Tuple[Any, Any, Any]]] = None,
     incident_penalties: Optional[Dict[Tuple[Any, Any, Any], float]] = None,
-    max_visited_nodes: int = 5000,
+    max_visited_nodes: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Breadth-First Search (BFS).
     
@@ -211,7 +211,7 @@ def breadth_first_search(
             found = True
             break
 
-        if len(search_order) >= max_visited_nodes:
+        if max_visited_nodes is not None and len(search_order) >= max_visited_nodes:
             break
 
         # Deterministic neighbor traversal
@@ -268,7 +268,7 @@ def depth_first_search(
     dest_node: Any,
     blocked_edges: Optional[Set[Tuple[Any, Any, Any]]] = None,
     incident_penalties: Optional[Dict[Tuple[Any, Any, Any], float]] = None,
-    max_visited_nodes: int = 5000,
+    max_visited_nodes: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Depth-First Search (DFS).
     
@@ -312,7 +312,7 @@ def depth_first_search(
             found = True
             break
 
-        if len(search_order) >= max_visited_nodes:
+        if max_visited_nodes is not None and len(search_order) >= max_visited_nodes:
             break
 
         # Push neighbors in reverse order so lowest key is popped first
@@ -369,7 +369,7 @@ def dijkstra_search(
     objective: str = "length",
     blocked_edges: Optional[Set[Tuple[Any, Any, Any]]] = None,
     incident_penalties: Optional[Dict[Tuple[Any, Any, Any], float]] = None,
-    max_visited_nodes: int = 5000,
+    max_visited_nodes: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Dijkstra's Algorithm.
     
@@ -416,7 +416,7 @@ def dijkstra_search(
             found = True
             break
 
-        if len(visited_nodes) >= max_visited_nodes:
+        if max_visited_nodes is not None and len(visited_nodes) >= max_visited_nodes:
             break
 
         for v, edge_dict in graph.adj[u].items():
@@ -474,7 +474,7 @@ def a_star_search(
     objective: str = "length",
     blocked_edges: Optional[Set[Tuple[Any, Any, Any]]] = None,
     incident_penalties: Optional[Dict[Tuple[Any, Any, Any], float]] = None,
-    max_visited_nodes: int = 5000,
+    max_visited_nodes: Optional[int] = None,
 ) -> Dict[str, Any]:
     """A* Search Algorithm with Admissible Haversine Heuristic.
     
@@ -536,7 +536,7 @@ def a_star_search(
             found = True
             break
 
-        if len(visited_nodes) >= max_visited_nodes:
+        if max_visited_nodes is not None and len(visited_nodes) >= max_visited_nodes:
             break
 
         for v, edge_dict in graph.adj[u].items():

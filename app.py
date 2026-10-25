@@ -42,9 +42,10 @@ except Exception:
 app = Flask(__name__)
 
 CENTER = (30.3165, 78.0322)  # latitude, longitude of central Dehradun (Clock Tower area)
-DISTANCE_M = 1_500  # ~3 km by 3 km bounding box
-CACHE_DIR = Path("data")
-CACHE_FILE = CACHE_DIR / "dehradun_drive.graphml"
+DISTANCE_M = 3_500  # ~7 km by 7 km box: (3500 / 1500)^2 = 5.44x the original area
+CACHE_DIR = Path(__file__).resolve().parent / "data"
+# Key the cache by coverage so future changes cannot silently reuse a smaller graph.
+CACHE_FILE = CACHE_DIR / f"dehradun_drive_{CENTER[0]}_{CENTER[1]}_{DISTANCE_M}m.graphml"
 
 # Calculate bounding box for geographic validation
 west, south, east, north = ox.utils_geo.bbox_from_point(CENTER, dist=DISTANCE_M)
@@ -140,9 +141,10 @@ def load_or_fetch_graph() -> Optional[nx.MultiDiGraph]:
                 app.logger.warning("Corrupt graph cache file. Re-downloading...", exc_info=True)
 
         endpoints = [
-            "https://maps.mail.ru/osm/tools/overpass/api",
             "https://overpass-api.de/api",
+            "https://overpass.private.coffee/api",
             "https://overpass.kumi.systems/api",
+            "https://maps.mail.ru/osm/tools/overpass/api",
         ]
         for ep in endpoints:
             try:
@@ -156,7 +158,7 @@ def load_or_fetch_graph() -> Optional[nx.MultiDiGraph]:
                     _graph_json = _serialize_graph(g)
                     return road_graph
             except Exception:
-                continue
+                app.logger.warning("Road graph download failed via %s", ep, exc_info=True)
 
     return None
 
@@ -338,7 +340,7 @@ def calculate_route():
             execution_time_ms=result.get("execution_time_ms", 0),
             visited_coords=[
                 [float(road_graph.nodes[n]["y"]), float(road_graph.nodes[n]["x"])]
-                for n in result.get("visited_nodes", [])[:300]
+                for n in result.get("visited_nodes", [])
             ],
             notes=result.get("notes", ""),
         ), 200
@@ -347,17 +349,15 @@ def calculate_route():
     route_latlngs = extract_route_geometry(road_graph, path_edges)
 
     visited_nodes = result.get("visited_nodes", [])
-    step = max(1, len(visited_nodes) // 300)
-    sampled_visited = visited_nodes[::step][:300]
     visited_coords = [
         [float(road_graph.nodes[n]["y"]), float(road_graph.nodes[n]["x"])]
-        for n in sampled_visited
+        for n in visited_nodes
         if n in road_graph
     ]
 
     tree_edges = result.get("tree_edges", [])
     search_tree_edges = []
-    for u, v in tree_edges[:600]:
+    for u, v in tree_edges:
         if u in road_graph and v in road_graph:
             search_tree_edges.append([
                 [float(road_graph.nodes[u]["y"]), float(road_graph.nodes[u]["x"])],

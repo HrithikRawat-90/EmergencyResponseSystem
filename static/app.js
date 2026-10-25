@@ -3,7 +3,7 @@
  * Features:
  * - Spider-web search tree animation connecting parent-to-child nodes as algorithms expand.
  * - Smooth step animation with speed controls (0.23x, 0.5x, 1x, 1.5x, 2x).
- * - Destination highlight with automatic 1-second fade-out of search branches.
+ * - Complete search playback and distance-based route reveal with a soft teal glow.
  * - Robust map initialization with OpenStreetMap tiles and automatic resize invalidation.
  */
 
@@ -21,7 +21,7 @@
 
     const config = window.APP_CONFIG || {
       center: [30.3165, 78.0322],
-      bounds: [[30.303, 78.016], [30.330, 78.048]],
+      bounds: [[30.28502, 77.99574], [30.34798, 78.06866]],
     };
     const studyBounds = L.latLngBounds(config.bounds);
 
@@ -46,6 +46,7 @@
       animationTimer: null,
       animationPaused: false,
       animSpeed: 1.0,
+      routeRequestId: 0,
       latestResult: null,
       replanCount: 0,
 
@@ -73,6 +74,7 @@
     }).addTo(map);
 
     // Subdued Sector Boundary
+    map.fitBounds(studyBounds, { padding: [30, 30] });
     L.rectangle(studyBounds, {
       color: "#1b4d44",
       weight: 1.5,
@@ -153,8 +155,8 @@
 
     // Clear all existing animation / route layers
     function clearRouteLayers() {
-      if (state.animationTimer) {
-        clearInterval(state.animationTimer);
+      if (state.animationTimer !== null) {
+        cancelAnimationFrame(state.animationTimer);
         state.animationTimer = null;
       }
       if (state.spiderWebLayer) {
@@ -177,6 +179,8 @@
       const algo = byId("algorithm-select").value;
       const objective = byId("select-objective").value;
       const vehicle = byId("select-vehicle").value;
+      const requestId = ++state.routeRequestId;
+      clearRouteLayers();
 
       byId("ops-status-text").textContent = `Computing ${algo.toUpperCase()} route...`;
 
@@ -194,6 +198,7 @@
         });
 
         const data = await res.json();
+        if (requestId !== state.routeRequestId) return;
         if (!data.success) {
           showToast(data.error || "No viable route found.");
           byId("ops-status-text").textContent = "No route found with current obstacles";
@@ -207,6 +212,7 @@
         requestAIBriefing(data);
 
       } catch (err) {
+        if (requestId !== state.routeRequestId) return;
         showToast("Routing calculation error.");
         byId("ops-status-text").textContent = "Server connection error";
       }
@@ -235,116 +241,156 @@
       }
     }
 
-    // Smooth Spider-Web Search Tree Animation
+    // Every returned parent/child connection is played in algorithm expansion order.
+    // One canvas path holds the settled tree; SVG is reserved for the winning glow.
     function startSpiderWebAnimation(data) {
       clearRouteLayers();
-
+      state.animationPaused = false;
+      map.getContainer().classList.remove("playback-paused");
+      byId("resume-playback-btn").textContent = "Pause";
       const edges = data.search_tree_edges || [];
-      const routeGeom = data.route_geometry || [];
-      const visitedCoords = data.visited_coords || [];
-
-      // Create LayerGroup for spider-web lines
+      const route = data.route_geometry || [];
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const searchRenderer = L.canvas({ padding: 0.5 });
+      const routeRenderer = L.svg({ padding: 0.5 });
       state.spiderWebLayer = L.layerGroup().addTo(map);
+      state.activeRouteLayer = L.featureGroup().addTo(map);
+      // Share one canvas for the blue search branches and their endpoint dots.
+      const settled = L.polyline([], {
+        renderer: searchRenderer, color: "#0284c7", weight: 2,
+        opacity: 0.65, interactive: false, lineCap: "round",
+      }).addTo(state.spiderWebLayer);
+      const exploredDots = L.layerGroup().addTo(state.spiderWebLayer);
+      const frontier = L.polyline([], {
+        renderer: searchRenderer, color: "#0284c7", weight: 3,
+        opacity: 0.95, interactive: false, lineCap: "round",
+      }).addTo(state.spiderWebLayer);
+      const tip = L.circleMarker(data.start.snapped, {
+        renderer: searchRenderer, radius: 3.5, weight: 1,
+        color: "#38bdf8", fillColor: "#7dd3fc", fillOpacity: 0.9,
+        interactive: false,
+      }).addTo(state.spiderWebLayer);
 
-      // Determine step delay and batch size based on user-selected speed
-      const speed = parseFloat(state.animSpeed) || 1.0;
-      let intervalMs = 30;
-      let batchSize = 1;
+      const accumulated = [];
+      let completed = 0;
+      let searchTime = 0;
+      let revealTime = 0;
+      let phase = "search";
+      let lastTime = null;
+      let routeLayers = [];
+      let head;
+      // Bound playback duration, never the data: larger graphs batch ALL edges.
+      const searchDuration = reducedMotion ? 0 : Math.min(16000, Math.max(1800, edges.length * 12));
+      const revealDuration = reducedMotion ? 0 : 2400;
+      const lengths = [0];
+      for (let i = 1; i < route.length; i++) {
+        lengths.push(lengths[i - 1] + map.distance(route[i - 1], route[i]));
+      }
+      const routeLength = lengths[lengths.length - 1] || 0;
+      const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      const setStatus = (text) => { byId("ops-status-text").textContent = text; };
+      setStatus(`${data.algorithm} · Exploring 0 / ${edges.length.toLocaleString()} connections`);
 
-      if (speed <= 0.25) {
-        intervalMs = 50;
-        batchSize = 1; // 0.23x: extremely slow, fine detail
-      } else if (speed <= 0.5) {
-        intervalMs = 35;
-        batchSize = 1; // 0.5x: slow
-      } else if (speed <= 1.0) {
-        intervalMs = 25;
-        batchSize = 2; // 1x: standard
-      } else if (speed <= 1.5) {
-        intervalMs = 20;
-        batchSize = 4; // 1.5x: fast
-      } else {
-        intervalMs = 15;
-        batchSize = 8; // 2x: rapid
+      function beginReveal() {
+        phase = "reveal";
+        frontier.setLatLngs([]);
+        tip.setRadius(0);
+        state.spiderWebLayer.removeLayer(exploredDots);
+        const styles = [
+          { color: "#153f43", weight: 9, opacity: 0.42, className: "route-casing" },
+          { color: "#73cbbd", weight: 13, opacity: 0.34, className: "route-halo" },
+          { color: "#318d84", weight: 5, opacity: 1, className: "route-core" },
+          { color: "#c4eee1", weight: 1.8, opacity: 0.94, className: "route-highlight" },
+        ];
+        routeLayers = styles.map(style => L.polyline([], {
+          ...style, renderer: routeRenderer, interactive: false,
+          lineCap: "round", lineJoin: "round",
+        }).addTo(state.activeRouteLayer));
+        if (route.length) {
+          head = L.circleMarker(route[0], {
+            renderer: routeRenderer, radius: 5, color: "#e4f6ee", weight: 2,
+            fillColor: "#489f91", fillOpacity: 1, className: "route-head",
+            interactive: false,
+          }).addTo(state.activeRouteLayer);
+        }
+        setStatus(`${data.algorithm} · Route found · Tracing the selected path`);
       }
 
-      let edgeIdx = 0;
-      const totalEdges = edges.length;
-
-      // Fallback if tree_edges empty: connect visited coords sequentially
-      const hasTree = totalEdges > 0;
-      const totalItems = hasTree ? totalEdges : visitedCoords.length - 1;
-
-      state.animationTimer = setInterval(() => {
-        if (state.animationPaused) return;
-
-        const limit = Math.min(edgeIdx + batchSize, totalItems);
-
-        for (let i = edgeIdx; i < limit; i++) {
-          let linePts;
-          if (hasTree) {
-            linePts = edges[i]; // [[p_lat, p_lon], [c_lat, c_lon]]
+      function frame(now) {
+        const delta = lastTime === null ? 0 : Math.min(now - lastTime, 80);
+        lastTime = now;
+        if (!state.animationPaused) {
+          const elapsed = delta * (parseFloat(state.animSpeed) || 1);
+          if (phase === "search") {
+            searchTime += elapsed;
+            const progress = searchDuration ? Math.min(searchTime / searchDuration, 1) : 1;
+            const position = progress * edges.length;
+            const next = Math.floor(position);
+            while (completed < next) {
+              const branch = edges[completed++];
+              accumulated.push(branch);
+              L.circleMarker(branch[branch.length - 1], {
+                renderer: searchRenderer, radius: 2, color: "#38bdf8",
+                weight: 1, fillColor: "#7dd3fc", fillOpacity: 0.9,
+                interactive: false,
+              }).addTo(exploredDots);
+            }
+            settled.setLatLngs(accumulated);
+            const edge = edges[completed];
+            if (edge) {
+              const end = mix(edge[0], edge[edge.length - 1], position - next);
+              frontier.setLatLngs([edge[0], end]);
+              tip.setLatLng(end);
+            }
+            setStatus(`${data.algorithm} · Exploring ${completed.toLocaleString()} / ${edges.length.toLocaleString()} connections`);
+            if (progress === 1) beginReveal();
           } else {
-            linePts = [visitedCoords[i], visitedCoords[i + 1]];
-          }
-
-          if (linePts && linePts[0] && linePts[1]) {
-            // Glowing spider-web branch line
-            const branch = L.polyline(linePts, {
-              color: "#0284c7",
-              weight: 2,
-              opacity: 0.65,
-              lineCap: "round",
-            });
-            state.spiderWebLayer.addLayer(branch);
-
-            // Subtle explorer pulse dot at branch tip
-            const pulseDot = L.circleMarker(linePts[1], {
-              radius: 2,
-              color: "#38bdf8",
-              weight: 1,
-              fillColor: "#7dd3fc",
-              fillOpacity: 0.9,
-            });
-            state.spiderWebLayer.addLayer(pulseDot);
-          }
-        }
-
-        edgeIdx = limit;
-
-        // Search has reached destination!
-        if (edgeIdx >= totalItems) {
-          clearInterval(state.animationTimer);
-          state.animationTimer = null;
-
-          // 1. Immediately highlight the winning optimal route in bold
-          if (routeGeom && routeGeom.length > 0) {
-            const glowRoute = L.polyline(routeGeom, {
-              color: "#34d399",
-              weight: 9,
-              opacity: 0.5,
-              lineJoin: "round",
-            });
-
-            const mainRoute = L.polyline(routeGeom, {
-              color: "#10b981",
-              weight: 5.5,
-              opacity: 0.95,
-              lineJoin: "round",
-            });
-
-            state.activeRouteLayer = L.featureGroup([glowRoute, mainRoute]).addTo(map);
-          }
-
-          // 2. Exactly after 1 second (1000ms), all spider web lines disappear
-          setTimeout(() => {
-            if (state.spiderWebLayer) {
+            revealTime += elapsed;
+            const progress = revealDuration ? Math.min(revealTime / revealDuration, 1) : 1;
+            // Gentle ease-in/out, measured by road distance rather than vertex count.
+            const distance = routeLength * (progress * progress * (3 - 2 * progress));
+            let index = 0;
+            while (index + 1 < lengths.length && lengths[index + 1] <= distance) index++;
+            const visible = route.slice(0, index + 1);
+            if (index + 1 < route.length) {
+              const span = lengths[index + 1] - lengths[index];
+              visible.push(mix(route[index], route[index + 1], span ? (distance - lengths[index]) / span : 1));
+            }
+            routeLayers.forEach(layer => layer.setLatLngs(visible));
+            if (head && visible.length) head.setLatLng(visible[visible.length - 1]);
+            // Keep search context as the path emerges, then fade it in the same clock.
+            settled.setStyle({ opacity: 0.65 * (1 - progress) });
+            if (progress === 1) {
               map.removeLayer(state.spiderWebLayer);
               state.spiderWebLayer = null;
+              // Release renderers explicitly on replay/replan to avoid accumulating canvases.
+              map.removeLayer(searchRenderer);
+              if (head) state.activeRouteLayer.removeLayer(head);
+              if (route.length > 1 && !reducedMotion) {
+                L.polyline(route, {
+                  renderer: routeRenderer, color: "#d4f2e7", weight: 2.2,
+                  opacity: 0.7, dashArray: "3 26", className: "route-flow",
+                  interactive: false, lineCap: "round",
+                }).addTo(state.activeRouteLayer);
+              }
+              if (route.length) {
+                L.circleMarker(route[route.length - 1], {
+                  renderer: routeRenderer, radius: 11, color: "#5ba99a", weight: 2,
+                  fillOpacity: 0, className: "route-arrival", interactive: false,
+                }).addTo(state.activeRouteLayer);
+              }
+              setStatus(`Route Active · ${(data.distance_m / 1000).toFixed(2)} km (${data.algorithm})`);
+              state.animationTimer = null;
+              return;
             }
-          }, 1000);
+          }
         }
-      }, intervalMs);
+        state.animationTimer = requestAnimationFrame(frame);
+      }
+      // Renderer ownership belongs to this playback, including cancellation mid-reveal.
+      state.spiderWebLayer.on("remove", () => map.removeLayer(searchRenderer));
+      state.activeRouteLayer.on("remove", () => map.removeLayer(routeRenderer));
+      state.animationTimer = requestAnimationFrame(frame);
     }
 
     // AI Briefing Request
@@ -547,6 +593,7 @@
     // Playback Controls
     byId("resume-playback-btn").addEventListener("click", () => {
       state.animationPaused = !state.animationPaused;
+      map.getContainer().classList.toggle("playback-paused", state.animationPaused);
       byId("resume-playback-btn").textContent = state.animationPaused ? "Resume" : "Pause";
     });
 
@@ -659,7 +706,7 @@
       }
 
       if (!studyBounds.contains(e.latlng)) {
-        showToast("Click inside central Dehradun.");
+        showToast("Click inside the Dehradun rescue sector boundary.");
         return;
       }
 

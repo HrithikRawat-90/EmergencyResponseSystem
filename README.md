@@ -12,7 +12,9 @@ An intelligent, interactive emergency response and rescue routing system built w
 - **`templates/index.html`**: Modern, responsive, full-screen map interface with collapsible mission control dashboard, floating legend, search order animation bar, comparison modal, and bottom metrics drawer.
 - **`static/style.css`**: Curated modern dark-mode emergency response theme with glassmorphism overlays and responsive styling.
 - **`static/app.js`**: Vanilla JavaScript Leaflet controller managing both Real Map & Dark Graph modes, interactive waypoint snapping, search order animations, incident placement, and live dispatch results.
-- **`data/dehradun_drive.graphml`**: Persistently cached real drivable road network of central Dehradun (1,659 nodes, 4,142 directed edges) retrieved via OSMnx.
+- **`data/dehradun_drive_<lat>_<lon>_<distance>m.graphml`**: Cached drivable road network retrieved via OSMnx. Current sector: approximately **7 km × 7 km (49 km²)**, **5.44×** the original 3 km × 3 km area. The original `dehradun_drive.graphml` is retained but no longer loaded.
+
+For future changes, read **`PROJECT_SUMMARY.md`** first. Coverage is controlled by `CENTER` and `DISTANCE_M` in `app.py`; the frontend receives the same bounds automatically. Changing coverage selects a new disk cache and requires an initial network download. Searches can traverse the entire graph without the former 5,000-node default cutoff.
 
 ---
 
