@@ -25,6 +25,7 @@ import networkx as nx
 import osmnx as ox
 
 import algorithms
+import graph_context
 
 # Optional Gemini API Rotator integration (internal backend only, NEVER exposed in UI)
 gemini_rotator = None
@@ -253,6 +254,7 @@ def index():
             "center": list(CENTER),
             "bounds": BOUNDS,
             "graph_url": url_for("graph_data"),
+            "graph_context_url": url_for("graph_context_data"),
         },
     )
 
@@ -275,6 +277,33 @@ def graph_data():
         error="graph_unavailable",
         message="Could not load the road graph. Please check your network or restart the server.",
     ), 503
+
+
+@app.get("/api/nodes")
+def working_nodes_data():
+    """Actual routing nodes inside the selectable sector, independent of playback."""
+    graph = load_or_fetch_graph()
+    if graph is None:
+        return jsonify(error="graph_unavailable"), 503
+    nodes = [
+        {"id": str(node), "lat": float(data["y"]), "lon": float(data["x"])}
+        for node, data in graph.nodes(data=True)
+        if BOUNDS[0][0] <= float(data["y"]) <= BOUNDS[1][0]
+        and BOUNDS[0][1] <= float(data["x"]) <= BOUNDS[1][1]
+    ]
+    response = jsonify(nodes=nodes, count=len(nodes), bounds=BOUNDS)
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
+
+
+@app.get("/api/graph-context")
+def graph_context_data():
+    try:
+        response = Response(graph_context.load_context(CENTER, BOUNDS, CACHE_DIR), mimetype="application/geo+json")
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
+    except RuntimeError as exc:
+        return jsonify(error="context_unavailable", message=str(exc)), 503
 
 
 @app.post("/api/route")

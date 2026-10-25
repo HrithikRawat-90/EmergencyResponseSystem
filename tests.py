@@ -12,6 +12,8 @@ Tests:
 
 import unittest
 import json
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 import networkx as nx
 
@@ -259,6 +261,47 @@ class TestFlaskAPI(unittest.TestCase):
                 response = self.client.post("/api/incidents", json={"lat": lat, "lon": lon, "type": "roadblock"})
                 self.assertEqual(response.status_code, 400)
                 self.assertFalse(response.get_json()["success"])
+
+    def test_working_nodes_include_isolated_nodes_and_exclude_outside(self):
+        graph = nx.MultiDiGraph()
+        graph.add_node(1, y=app.CENTER[0], x=app.CENTER[1])
+        graph.add_node(2, y=app.BOUNDS[0][0], x=app.BOUNDS[0][1])
+        graph.add_node(3, y=app.BOUNDS[1][0] + 0.01, x=app.CENTER[1])
+        with patch.object(app, "road_graph", graph):
+            response = self.client.get("/api/nodes")
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertEqual(data["count"], 2)
+            self.assertEqual({node["id"] for node in data["nodes"]}, {"1", "2"})
+            self.assertEqual(data["bounds"], app.BOUNDS)
+            self.assertEqual(data["nodes"][0]["lat"], app.CENTER[0])
+
+    def test_graph_context_is_separate_and_cached(self):
+        original_graph = app.road_graph
+        original_bounds = [list(point) for point in app.BOUNDS]
+        response_data = {"elements": [{"id": 42, "geometry": [
+            {"lat": 30.3165, "lon": 78.09}, {"lat": 30.32, "lon": 78.10}]}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(app.graph_context.requests, "get") as download:
+                download.return_value.json.return_value = response_data
+                with patch.object(app, "CACHE_DIR", Path(temporary)):
+                    response = self.client.get("/api/graph-context")
+                    self.assertEqual(response.status_code, 200)
+                    data = response.get_json()
+                    self.assertTrue(data["meta"]["context_only"])
+                    self.assertEqual(data["meta"]["working_bounds"], original_bounds)
+                    self.assertLess(data["meta"]["bounds"][0][0], original_bounds[0][0])
+                    self.assertGreater(data["meta"]["bounds"][1][1], original_bounds[1][1])
+                    self.assertEqual(self.client.get("/api/graph-context").get_data(), response.get_data())
+                    download.assert_called_once()
+                    self.assertTrue(list(Path(temporary).glob("*.geojson")))
+        self.assertIs(app.road_graph, original_graph)
+        self.assertEqual(app.BOUNDS, original_bounds)
+
+    def test_graph_context_failure_keeps_routing_available(self):
+        with patch.object(app.graph_context, "load_context", side_effect=RuntimeError("Temporarily unavailable")):
+            self.assertEqual(self.client.get("/api/graph-context").status_code, 503)
+            self.assertEqual(self.client.get("/api/graph").status_code, 200)
 
     def test_incidents_crud(self):
         # 1. Add incident

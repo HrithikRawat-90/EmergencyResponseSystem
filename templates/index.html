@@ -672,9 +672,28 @@ body.app-body {
   }
 }
 
-  </style>
+  /* Graph-only presentation; real map and its route classes remain unchanged. */
+.graph-canvas { position: absolute; pointer-events: none; }
+.graph-toggle[aria-pressed="true"] { color: #b6eaff; background: #13283b; }
+.map-card.is-graph-view { background: #030609; }
+.is-graph-view #map { background: #030609; }
+.working-nodes-canvas { position: absolute; pointer-events: none; }
+.is-graph-view .legend-card { display: none; }
+.is-graph-view .leaflet-control-attribution { background: #030609; color: #8493a6; }
+.graph-caption { position: absolute; right: 22px; bottom: 25px; z-index: 500; display: flex; align-items: flex-end; flex-direction: column; gap: 6px; pointer-events: none; }
+.graph-caption span { max-width: 230px; font-size: 11px; color: #8295ac; text-align: right; }
+.graph-legend { position: absolute; bottom: 28px; left: 22px; z-index: 500; display: flex; flex-direction: column; gap: 7px; font-size: 11px; color: #a4b2c5; pointer-events: none; }
+.graph-legend span { display: flex; align-items: center; gap: 8px; }
+.graph-key { display: inline-block; height: 2px; width: 20px; background: #34425b; }
+.graph-key.explored { background: #00c9ff; box-shadow: 0 0 6px #00c9ff77; }
+.graph-key.path { background: #efffff; box-shadow: 0 0 8px #7aeaff; }
+.graph-mode .clean-circle-marker > div { background: #f35c52 !important; border-color: #ffc4bc !important; box-shadow: 0 0 8px #ff655e, 0 0 20px #ff655e88 !important; }
+.graph-mode .clean-circle-marker.graph-destination > div { background: #23cf8c !important; border-color: #b3ffe0 !important; box-shadow: 0 0 8px #25e49a, 0 0 20px #25e49a88 !important; }
+@media (max-width: 600px) { .graph-caption { right: 12px; bottom: 22px; } .graph-caption span { max-width: 145px; } .graph-legend { left: 12px; font-size: 10px; } }
+</style>
   <script>window.APP_CONFIG = {{ app_config | tojson }};</script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script defer src="{{ url_for('static', filename='graph-view.js') }}?v={{ cache_buster }}"></script>
   <script defer src="{{ url_for('static', filename='app.js') }}?v={{ cache_buster }}"></script>
 </head>
 <body class="app-body">
@@ -701,6 +720,7 @@ body.app-body {
         <button id="nav-btn-navigate" class="nav-item" type="button">Navigate</button>
         <button id="nav-btn-route" class="nav-item is-active" type="button">Route</button>
         <button id="nav-btn-traffic" class="nav-item" type="button">Traffic</button>
+        <button id="nav-btn-graph" class="nav-item graph-toggle" type="button" aria-pressed="false" aria-label="Switch to road graph view" title="Toggle real map and road graph">Graph</button>
       </nav>
 
       <!-- Center Content Column (Map on top, Details on bottom) -->
@@ -709,6 +729,16 @@ body.app-body {
         <!-- Map Card with floating overlays -->
         <section class="card map-card" aria-label="Interactive Navigation Map">
           <div id="map" role="region" aria-label="City Map"></div>
+
+          <div id="graph-caption" class="graph-caption" hidden>
+            <span id="graph-view-status" role="status">Road network graph</span>
+            <span>&copy; OpenStreetMap contributors</span>
+          </div>
+          <div class="graph-legend" hidden>
+            <span><i class="graph-key network"></i>Roads · Dashed boundary = working sector</span>
+            <span><i class="graph-key explored"></i>Explored roads</span>
+            <span><i class="graph-key path"></i>Selected path</span>
+          </div>
 
           <!-- Top-Left Floating Start/Destination Card -->
           <div class="floating-overlay start-dest-card">
@@ -951,6 +981,7 @@ body.app-body {
               </select>
             </div>
             <label class="settings-check"><input id="show-search-toggle" type="checkbox" checked> Show exploration branches</label>
+            <label class="settings-check"><input id="show-nodes-toggle" type="checkbox"> Show all working-area nodes (blue)</label>
             <label class="settings-check"><input id="auto-replan-toggle" type="checkbox" checked> Recalculate after incident changes</label>
             <p class="form-help-text">Playback changes apply immediately. Automatic recalculation requires both waypoints.</p>
           </div>

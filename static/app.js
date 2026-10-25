@@ -39,6 +39,7 @@
       startLandmarkId: "",
       destLandmarkId: "",
       targetSetting: "start",
+      viewMode: "map",
 
       // Animation State
       spiderWebLayer: null,
@@ -47,6 +48,7 @@
       animationPaused: false,
       animSpeed: 1.0,
       showSearch: true,
+      showNodes: false,
       autoReplan: true,
       searchComplete: false,
       routeRequestId: 0,
@@ -71,7 +73,7 @@
     });
 
     // Primary OpenStreetMap tile layer (100% reliable across all browsers & networks)
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    const realTiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(map);
@@ -86,6 +88,21 @@
       interactive: false,
     }).addTo(map);
 
+    let realViewport = null, graphViewport = null;
+    const graphView = window.createGraphView({
+      map, url: config.graph_url || "/api/graph",
+      contextUrl: config.graph_context_url || "/api/graph-context", workingBounds: config.bounds, getState: () => state,
+      onProgress: updateLiveSummary,
+      onStatus: text => { byId("ops-status-text").textContent = text; },
+      onFound: data => {
+        state.searchComplete = true;
+        updateDetails(); updateSummaryUI(data);
+        byId("summary-progress").textContent = "Graph route found · Final distance and estimated time";
+      },
+    });
+
+    const workingNodes = window.createWorkingNodesOverlay({map, url: "/api/nodes"});
+
     // Multiple invalidation calls to guarantee map dimensions render properly
     setTimeout(() => map.invalidateSize(), 100);
     setTimeout(() => map.invalidateSize(), 400);
@@ -97,7 +114,7 @@
       const bg = isStart ? "#1b4d44" : "#1a5e52";
       const letter = isStart ? "S" : "D";
       return L.divIcon({
-        className: "clean-circle-marker",
+        className: `clean-circle-marker${isStart ? "" : " graph-destination"}`,
         iconSize: [28, 28],
         iconAnchor: [14, 14],
         html: `
@@ -130,7 +147,13 @@
           icon: createCircleIcon(kind), draggable: true, autoPan: true,
         }).addTo(map);
         markers[kind].on("dragend", () => {
-          setWaypoint(kind, markers[kind].getLatLng());
+          const point = markers[kind].getLatLng();
+          if (!studyBounds.contains(point)) {
+            markers[kind].setLatLng(state[kind]);
+            showToast("Keep waypoints inside the Dehradun working sector.");
+            return;
+          }
+          setWaypoint(kind, point);
         });
       } else {
         markers[kind].setLatLng(latlng);
@@ -157,6 +180,7 @@
 
     // Clear all existing animation / route layers
     function clearRouteLayers() {
+      graphView.clearPlayback();
       if (state.animationTimer !== null) {
         cancelAnimationFrame(state.animationTimer);
         state.animationTimer = null;
@@ -238,7 +262,7 @@
         }
 
         state.latestResult = data;
-        startSpiderWebAnimation(data);
+        startRoutePlayback(data);
 
       } catch (err) {
         if (requestId !== state.routeRequestId) return;
@@ -268,6 +292,23 @@
         html += `</div>`;
         stepsList.innerHTML = html;
       }
+    }
+
+    // Graph playback is separate; the original real-map animation below is unchanged.
+    function startRoutePlayback(data) {
+      if (state.viewMode === "map") return startSpiderWebAnimation(data);
+      ++state.routeRequestId;
+      clearRouteLayers();
+      state.animationPaused = false;
+      state.searchComplete = false;
+      updateDetails();
+      byId("resume-playback-btn").textContent = "Pause";
+      byId("resume-playback-btn").disabled = false;
+      byId("replay-btn").disabled = false;
+      byId("turn-steps-list").textContent = "Exploring the road graph. Directions appear when the route is found.";
+      byId("deck-instruction").textContent = "Exploring the road network graph…";
+      updateLiveSummary({distance_m: 0, duration_s: 0, nodes_expanded: 0}, data.algorithm, "Graph exploration · Current path from start");
+      graphView.play(data);
     }
 
     // Every returned parent/child connection is played in algorithm expansion order.
@@ -551,6 +592,7 @@
     }
 
     function renderHazards() {
+      graphView.redraw();
       state.incidentLayers.forEach((l) => map.removeLayer(l));
       state.incidentLayers = [];
 
@@ -610,9 +652,10 @@
     // Map Controls
     byId("btn-zoom-in").addEventListener("click", () => map.zoomIn());
     byId("btn-zoom-out").addEventListener("click", () => map.zoomOut());
-    byId("btn-recenter").addEventListener("click", () => {
-      map.fitBounds(studyBounds, { padding: [30, 30] });
-    });
+    function recenterView() {
+      map.fitBounds(studyBounds, {padding: [30, 30]});
+    }
+    byId("btn-recenter").addEventListener("click", recenterView);
 
     // Action Buttons
     byId("calculate-route-btn").addEventListener("click", computeRoute);
@@ -644,7 +687,7 @@
 
     byId("replay-btn").addEventListener("click", () => {
       if (state.latestResult) {
-        startSpiderWebAnimation(state.latestResult);
+        startRoutePlayback(state.latestResult);
       }
     });
 
@@ -711,9 +754,52 @@
         if (layer.eachLayer) layer.eachLayer(applyVisibility);
       }
       if (state.spiderWebLayer) applyVisibility(state.spiderWebLayer);
+      graphView.redraw();
+    });
+    byId("show-nodes-toggle").addEventListener("change", async e => {
+      state.showNodes = e.target.checked;
+      try { await workingNodes.setVisible(state.showNodes); }
+      catch (error) {
+        state.showNodes = false;
+        byId("show-nodes-toggle").checked = false;
+        showToast(error.message);
+      }
     });
     byId("auto-replan-toggle").addEventListener("change", e => {
       state.autoReplan = e.target.checked;
+    });
+
+    byId("nav-btn-graph").addEventListener("click", async () => {
+      const button = byId("nav-btn-graph");
+      const graph = state.viewMode !== "graph";
+      button.disabled = true;
+      const saved = state.latestResult;
+      const paused = state.animationPaused;
+      if (graph) realViewport = {center: map.getCenter(), zoom: map.getZoom()};
+      else graphViewport = {center: map.getCenter(), zoom: map.getZoom()};
+      clearRouteLayers();
+      state.viewMode = graph ? "graph" : "map";
+      map.getContainer().classList.toggle("graph-mode", graph);
+      map.getContainer().closest(".map-card").classList.toggle("is-graph-view", graph);
+      map.invalidateSize({animate: false});
+      const viewport = graph ? (graphViewport || realViewport) : realViewport;
+      if (viewport) map.setView(viewport.center, viewport.zoom, {animate: false});
+      else map.fitBounds(studyBounds, {padding: [30, 30], animate: false});
+      byId("graph-caption").hidden = !graph;
+      document.querySelector(".graph-legend").hidden = !graph;
+      button.textContent = graph ? "Real map" : "Graph";
+      button.setAttribute("aria-pressed", String(graph));
+      button.setAttribute("aria-label", graph ? "Switch to real map view" : "Switch to road graph view");
+      if (graph) map.removeLayer(realTiles); else realTiles.addTo(map);
+      try {
+        await graphView.setVisible(graph);
+        // Replay the same response in the selected renderer; never request a new route.
+        if (saved && state.latestResult === saved) {
+          startRoutePlayback(saved);
+          if (paused) byId("resume-playback-btn").click();
+        }
+      } catch (error) { showToast(error.message); }
+      finally { button.disabled = false; }
     });
 
     // Navigation Strip
@@ -734,9 +820,7 @@
       byId("traffic-hazard-panel").hidden = true;
     });
 
-    byId("nav-btn-navigate").addEventListener("click", () => {
-      map.fitBounds(studyBounds, { padding: [30, 30] });
-    });
+    byId("nav-btn-navigate").addEventListener("click", recenterView);
 
     // Hazard Controls
     document.querySelectorAll(".hazard-pill").forEach((btn) => {
