@@ -598,6 +598,15 @@
       byId("place-incident-btn").setAttribute("aria-pressed", String(active));
       map.getContainer().classList.toggle("placing-incident", active);
       byId("incident-status").textContent = active ? "Click a road inside the sector to place the incident." : `${state.activeIncidents.length} active incidents.`;
+      syncHazardShortcuts();
+    }
+
+    function syncHazardShortcuts() {
+      document.querySelectorAll(".hazard-shortcut").forEach(button => {
+        const selected = state.placingIncident && state.incidentType === button.dataset.hazardType;
+        button.classList.toggle("is-active", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
     }
 
     // Hazard Simulation
@@ -872,6 +881,16 @@
         document.querySelectorAll(".hazard-pill").forEach((b) => b.classList.remove("is-active"));
         btn.classList.add("is-active");
         state.incidentType = btn.dataset.type;
+        syncHazardShortcuts();
+      });
+    });
+
+    document.querySelectorAll(".hazard-shortcut").forEach(button => {
+      button.addEventListener("click", () => {
+        const cancel = state.placingIncident && state.incidentType === button.dataset.hazardType;
+        document.querySelector(`.hazard-pill[data-type="${button.dataset.hazardType}"]`).click();
+        setIncidentPlacement(!cancel);
+        if (!cancel) showToast(`Click a road to place ${button.textContent.toLowerCase()}. Click the shortcut again to cancel.`);
       });
     });
 

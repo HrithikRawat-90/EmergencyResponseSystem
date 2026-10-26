@@ -57,6 +57,11 @@ Purpose: educational Dehradun emergency vehicle routing simulator. Python Flask 
 - Relevant hooks: static/app.js journey lifecycle, replanAfterIncident, startRoutePlayback; one completion hook in real animation, graph onComplete hook. Original discovery/reveal visuals unchanged. templates/index.html journey-panel and unit-status-*; static/journey.js loaded before app.js.
 - Tests: 27 unit/API tests cover profile route differences/ETA, base-graph isolation, reversed geometry, segments, incident delay, compare agreement and zero-distance routes. test_journey.cjs covers actual dispatch in graph view, pause/view switching, replan without origin reset, occupied-road closure waiting, arrival/clear, zero-distance, auto-replan-off and stale replies. Existing playback/graph regressions remain relevant.
 
+## Left hazard shortcuts (2026-10-25)
+- templates/index.html: left-panels wraps the existing navigation and a second equally sized card below Graph, with Roadblock/Accident/Traffic shortcuts. Existing incident drawer markup/styles remain unchanged.
+- static/app.js: shortcuts select the existing hazard pill and arm setIncidentPlacement without opening the drawer, changing tabs, scrolling, or selecting waypoints. Clicking the selected shortcut again cancels. syncHazardShortcuts keeps aria-pressed/highlighting consistent with the old controls, placement, clear and cancellation. Uses existing incident API/replanning behavior in both map modes.
+- test_hazard_shortcuts.cjs (default port 5007, TEST_BASE_URL override): equal panel size, all hazard types, cancel/type switching, no scroll, graph mode, and old-panel synchronization. Preview: artifacts/hazard-shortcuts-preview.png.
+
 ## Current coverage (2026-10-24)
 - CENTER = (30.3165, 78.0322); DISTANCE_M = 3_500 (box half-width).
 - Approx. 7 km × 7 km = 49 km²; original half-width 1,500 m => 9 km². Area factor = (3500/1500)^2 = 5.44. This is bounding-box coverage, not a promise of roads at every location.

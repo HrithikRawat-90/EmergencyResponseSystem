@@ -132,6 +132,12 @@ body.app-body {
 }
 
 /* Left Navigation Strip */
+.left-panels {
+  display: grid;
+  grid-auto-rows: 1fr;
+  gap: 16px;
+}
+.hazard-shortcuts { justify-content: space-evenly; }
 .nav-strip {
   padding: 14px 10px;
   display: flex;
@@ -728,12 +734,19 @@ body.app-body {
     <div class="dashboard-grid">
 
       <!-- Left Vertical Nav Strip -->
+      <div class="left-panels">
       <nav class="card nav-strip" aria-label="Main Navigation">
         <button id="nav-btn-navigate" class="nav-item" type="button">Navigate</button>
         <button id="nav-btn-route" class="nav-item is-active" type="button">Route</button>
         <button id="nav-btn-traffic" class="nav-item" type="button">Traffic</button>
         <button id="nav-btn-graph" class="nav-item graph-toggle" type="button" aria-pressed="false" aria-label="Switch to road graph view" title="Toggle real map and road graph">Graph</button>
       </nav>
+      <nav class="card nav-strip hazard-shortcuts" aria-label="Quick hazard placement">
+        <button class="nav-item hazard-shortcut" data-hazard-type="roadblock" type="button" aria-pressed="false" title="Select, then click a road to place a roadblock">Roadblock</button>
+        <button class="nav-item hazard-shortcut" data-hazard-type="accident" type="button" aria-pressed="false" title="Select, then click a road to place an accident">Accident</button>
+        <button class="nav-item hazard-shortcut" data-hazard-type="congestion" type="button" aria-pressed="false" title="Select, then click a road to place traffic">Traffic</button>
+      </nav>
+      </div>
 
       <!-- Center Content Column (Map on top, Details on bottom) -->
       <div class="center-column">
