@@ -20,13 +20,14 @@ import time
 from uuid import uuid4
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from flask import Flask, Response, jsonify, render_template, request, url_for
+from flask import Flask, Response, jsonify, render_template, request, url_for, g
 import networkx as nx
 import osmnx as ox
 
 import algorithms
 import graph_context
 import vehicle_profiles
+from simulation import Simulation, PRIORITIES
 
 # Optional Gemini API Rotator integration (internal backend only, NEVER exposed in UI)
 gemini_rotator = None
@@ -58,6 +59,9 @@ road_graph: Optional[nx.MultiDiGraph] = None
 _graph_json: Optional[str] = None
 _node_cache: List[Tuple[Any, float, float]] = []  # (node_id, lat, lon)
 _download_lock = threading.Lock()
+_world_lock = threading.RLock()
+_environment_revision = 0
+_simulation = None
 
 # Simulated incident state:
 # _incident_registry: dict of incident_id -> { "type": ..., "edges": [(u, v, key)], "penalty": ..., ... }
@@ -218,7 +222,10 @@ def extract_route_geometry(graph: nx.MultiDiGraph, path_edges: List[Tuple[Any, A
 
 def _recompute_incident_state():
     """Cleanly recompute _blocked_edges and _incident_penalties from active registry."""
-    global _blocked_edges, _incident_penalties, _incident_registry
+    global _blocked_edges, _incident_penalties, _incident_registry, _environment_revision
+    _environment_revision += 1
+    if _simulation is not None:
+        _simulation.environment_changed()
     _blocked_edges.clear()
     _incident_penalties.clear()
 
@@ -238,12 +245,28 @@ def _recompute_incident_state():
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 
+@app.before_request
+def lock_simulation_world():
+    paths = ("/api/route", "/api/compare", "/api/incidents", "/api/simulation", "/api/fleet", "/api/traffic")
+    if request.path.startswith(paths):
+        _world_lock.acquire()
+        g.world_locked = True
+
+
+@app.teardown_request
+def unlock_simulation_world(error):
+    if g.pop("world_locked", False):
+        _world_lock.release()
+
+
 @app.after_request
 def add_no_cache_headers(response):
     if request.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+    elif request.path.startswith(("/api/simulation", "/api/fleet", "/api/traffic", "/api/incidents")):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -310,43 +333,44 @@ def graph_context_data():
         return jsonify(error="context_unavailable", message=str(exc)), 503
 
 
-@app.post("/api/route")
-def calculate_route():
+def build_route(payload):
     """Route calculation endpoint supporting BFS, DFS, Dijkstra, and A*."""
     global road_graph
     if road_graph is None:
         road_graph = load_or_fetch_graph()
         if road_graph is None:
-            return jsonify(success=False, error="Graph data is not yet available."), 503
+            return dict(success=False, error="Graph data is not yet available."), 503
 
-    payload = request.get_json(silent=True) or {}
     start_coords = payload.get("start")
     dest_coords = payload.get("destination")
     algorithm_name = payload.get("algorithm", "a*")
     objective = payload.get("objective", "length")
+    priority = payload.get("priority", "critical")
+    if not isinstance(priority, str) or priority not in PRIORITIES:
+        return dict(success=False, error="Choose critical, high, medium or low priority."), 400
     unit_type = payload.get("unit_type", "ambulance")
     if not isinstance(unit_type, str) or unit_type not in vehicle_profiles.PROFILES:
-        return jsonify(success=False, error="Choose ambulance, fire, or police."), 400
+        return dict(success=False, error="Choose ambulance, fire, or police."), 400
 
     if not start_coords or not dest_coords or len(start_coords) != 2 or len(dest_coords) != 2:
-        return jsonify(success=False, error="Both start and destination [lat, lon] must be provided."), 400
+        return dict(success=False, error="Both start and destination [lat, lon] must be provided."), 400
 
     try:
         s_lat, s_lon = float(start_coords[0]), float(start_coords[1])
         d_lat, d_lon = float(dest_coords[0]), float(dest_coords[1])
     except (ValueError, TypeError):
-        return jsonify(success=False, error="Invalid coordinate format."), 400
+        return dict(success=False, error="Invalid coordinate format."), 400
 
     pad = 0.05
     if not (BOUNDS[0][0] - pad <= s_lat <= BOUNDS[1][0] + pad and BOUNDS[0][1] - pad <= s_lon <= BOUNDS[1][1] + pad):
-        return jsonify(
+        return dict(
             success=False,
             error="Start coordinate is outside the central Dehradun rescue routing area.",
             bounds=BOUNDS,
         ), 400
 
     if not (BOUNDS[0][0] - pad <= d_lat <= BOUNDS[1][0] + pad and BOUNDS[0][1] - pad <= d_lon <= BOUNDS[1][1] + pad):
-        return jsonify(
+        return dict(
             success=False,
             error="Destination coordinate is outside the central Dehradun rescue routing area.",
             bounds=BOUNDS,
@@ -367,11 +391,12 @@ def calculate_route():
             incident_penalties=_incident_penalties,
         )
     except Exception as exc:
-        return jsonify(success=False, error=f"Pathfinding algorithm error: {str(exc)}"), 500
+        return dict(success=False, error=f"Pathfinding algorithm error: {str(exc)}"), 500
 
     if not result.get("found"):
-        return jsonify(
+        return dict(
             success=False,
+            revision=_environment_revision,
             error="No passable route found with current road closures. Try clearing roadblocks or selecting different points.",
             algorithm=algorithm_name,
             nodes_expanded=result.get("nodes_expanded", 0),
@@ -410,11 +435,13 @@ def calculate_route():
                 [float(road_graph.nodes[v]["y"]), float(road_graph.nodes[v]["x"])],
             ])
 
-    return jsonify(
+    return dict(
         success=True,
+        revision=_environment_revision,
         algorithm=result["algorithm"],
         objective=objective,
         unit_type=unit_type,
+        priority=priority,
         vehicle_profile=vehicle_profiles.public_profile(unit_type),
         journey_segments=journey_segments,
         start={
@@ -442,6 +469,17 @@ def calculate_route():
         total_visited_count=len(visited_nodes),
         notes=result.get("notes", ""),
     )
+
+
+def route_result(payload):
+    result = build_route(payload)
+    return result if isinstance(result, tuple) else (result, 200)
+
+
+@app.post("/api/route")
+def calculate_route():
+    data, status = route_result(request.get_json(silent=True) or {})
+    return jsonify(data), status
 
 
 @app.post("/api/compare")
@@ -502,6 +540,7 @@ def list_incidents():
     return jsonify(
         incidents=list(_incident_registry.values()),
         blocked_count=len(_blocked_edges),
+        revision=_environment_revision,
     )
 
 
@@ -579,7 +618,7 @@ def add_incident():
     
     _recompute_incident_state()
 
-    return jsonify(success=True, incident=incident_record)
+    return jsonify(success=True, incident=incident_record, revision=_environment_revision)
 
 
 @app.delete("/api/incidents/<incident_id>")
@@ -591,7 +630,7 @@ def remove_incident(incident_id: str):
 
     _incident_registry.pop(incident_id)
     _recompute_incident_state()
-    return jsonify(success=True, removed_id=incident_id)
+    return jsonify(success=True, removed_id=incident_id, revision=_environment_revision)
 
 
 @app.post("/api/incidents/clear")
@@ -600,7 +639,158 @@ def clear_all_incidents():
     global _blocked_edges, _incident_penalties, _incident_registry
     _incident_registry.clear()
     _recompute_incident_state()
-    return jsonify(success=True, message="All simulated incidents cleared.")
+    return jsonify(success=True, message="All simulated incidents cleared.", revision=_environment_revision)
+
+
+def clear_generated_traffic():
+    for incident_id in [key for key, value in _incident_registry.items() if value.get("source") == "automatic"]:
+        _incident_registry.pop(incident_id)
+    _recompute_incident_state()
+
+
+def generate_traffic(rng, tick):
+    clear_generated_traffic()
+    candidates = [(u, v, key, data) for u, v, key, data in road_graph.edges(keys=True, data=True)
+                  if all(BOUNDS[0][0] <= float(road_graph.nodes[node]["y"]) <= BOUNDS[1][0] and
+                         BOUNDS[0][1] <= float(road_graph.nodes[node]["x"]) <= BOUNDS[1][1] for node in (u, v))]
+    for index, (u, v, key, edge) in enumerate(rng.sample(candidates, min(3, len(candidates)))):
+        incident_id = f"auto_{tick}_{index}"
+        _incident_registry[incident_id] = {
+            "id": incident_id, "type": "congestion", "source": "automatic", "title": "Automatic simulated traffic",
+            "edges": [(u, v, key)], "penalty": rng.choice([1.5, 2.0, 2.5, 3.0]),
+            "coordinates": extract_route_geometry(road_graph, [(u, v, key)]),
+            "road_name": str(edge.get("name", "Sector road")),
+            "lat": float(road_graph.nodes[u]["y"]), "lon": float(road_graph.nodes[u]["x"]),
+            "created_at": datetime.now().strftime("%H:%M:%S"),
+        }
+    _recompute_incident_state()
+
+
+def get_simulation():
+    global _simulation
+    if _simulation is None:
+        if load_or_fetch_graph() is None:
+            raise ValueError("Road graph unavailable.")
+        depots = []
+        for unit_id, label, kind, point in [
+            ("ambulance-1", "Ambulance 1", "ambulance", [30.3189, 78.0408]),
+            ("ambulance-2", "Ambulance 2", "ambulance", [30.3143, 78.0334]),
+            ("fire-1", "Fire brigade 1", "fire", [30.3285, 78.0482]),
+            ("police-1", "Police 1", "police", [30.3254, 78.0419]),
+        ]:
+            _, lat, lon, _ = snap_coordinate_to_node(*point)
+            depots.append({"id": unit_id, "label": label, "type": kind, "position": [lat, lon]})
+        def conditions():
+            return ({tuple(map(str, edge)) for edge in _blocked_edges},
+                    {tuple(map(str, edge)): factor for edge, factor in _incident_penalties.items()})
+        _simulation = Simulation(depots, lambda payload: route_result(payload)[0], conditions,
+                                 generate_traffic, clear_generated_traffic)
+    return _simulation
+
+
+def simulation_payload():
+    return {"success": True, "fleet": get_simulation().snapshot(), "revision": _environment_revision,
+            "incidents": list(_incident_registry.values())}
+
+
+@app.get("/api/simulation")
+def simulation_state():
+    try:
+        return jsonify(simulation_payload())
+    except ValueError as error:
+        return jsonify(success=False, error=str(error)), 503
+
+
+def simulation_input():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("Send a JSON object.")
+    return payload
+
+
+@app.post("/api/fleet/requests")
+def fleet_request():
+    try:
+        payload = simulation_input()
+        destination = payload.get("destination", [])
+        if len(destination) != 2 or not (BOUNDS[0][0] <= float(destination[0]) <= BOUNDS[1][0] and
+                                         BOUNDS[0][1] <= float(destination[1]) <= BOUNDS[1][1]):
+            raise ValueError("Select an emergency destination inside the working sector.")
+        request_id = get_simulation().queue(payload)
+        return jsonify(**simulation_payload(), request_id=request_id)
+    except (ValueError, TypeError, OverflowError) as error:
+        return jsonify(success=False, error=str(error)), 400
+
+
+@app.post("/api/fleet/control")
+def fleet_control():
+    try:
+        get_simulation().control(simulation_input())
+        return jsonify(simulation_payload())
+    except (ValueError, TypeError, OverflowError) as error:
+        return jsonify(success=False, error=str(error)), 400
+
+
+def fleet_position(payload):
+    point = payload.get("position")
+    if not isinstance(point, list) or len(point) != 2:
+        raise ValueError("Choose a vehicle position inside the working sector.")
+    lat, lon = map(float, point)
+    if not (BOUNDS[0][0] <= lat <= BOUNDS[1][0] and BOUNDS[0][1] <= lon <= BOUNDS[1][1]):
+        raise ValueError("Choose a vehicle position inside the working sector.")
+    get_simulation()  # Ensure the graph is loaded before snapping.
+    _, lat, lon, _ = snap_coordinate_to_node(lat, lon)
+    return [lat, lon]
+
+
+@app.post("/api/fleet/units")
+def fleet_add_unit():
+    try:
+        payload = simulation_input()
+        unit_id = get_simulation().edit_unit("add", kind=payload.get("unit_type"), position=fleet_position(payload))
+        return jsonify(**simulation_payload(), unit_id=unit_id)
+    except (ValueError, TypeError, OverflowError) as error:
+        return jsonify(success=False, error=str(error)), 400
+
+
+@app.route("/api/fleet/units/<unit_id>", methods=["PATCH", "DELETE"])
+def fleet_edit_unit(unit_id):
+    try:
+        if request.method == "DELETE":
+            get_simulation().edit_unit("remove", unit_id)
+        else:
+            position = fleet_position(simulation_input())
+            get_simulation().edit_unit("move", unit_id, position=position)
+        return jsonify(simulation_payload())
+    except (ValueError, TypeError, OverflowError) as error:
+        return jsonify(success=False, error=str(error)), 400
+
+
+@app.post("/api/fleet/units/<unit_id>")
+def fleet_unit_control(unit_id):
+    try:
+        get_simulation().unit_control(unit_id, simulation_input().get("action"))
+        return jsonify(simulation_payload())
+    except ValueError as error:
+        return jsonify(success=False, error=str(error)), 400
+
+
+@app.delete("/api/fleet/requests/<request_id>")
+def fleet_cancel_request(request_id):
+    try:
+        get_simulation().cancel_request(request_id)
+        return jsonify(simulation_payload())
+    except ValueError as error:
+        return jsonify(success=False, error=str(error)), 400
+
+
+@app.post("/api/traffic/control")
+def traffic_control():
+    try:
+        get_simulation().traffic_control(simulation_input())
+        return jsonify(simulation_payload())
+    except (ValueError, TypeError, OverflowError) as error:
+        return jsonify(success=False, error=str(error)), 400
 
 
 @app.post("/api/ai/analyze-route")

@@ -91,7 +91,7 @@
       phase = "ready";
       byId("journey-panel").hidden = false;
       byId("journey-vehicle-label").textContent = route.vehicle_profile?.label || units[route.unit_type].label;
-      byId("journey-profile").textContent = route.vehicle_profile?.description || "Simulated vehicle profile";
+      byId("journey-profile").textContent = `${(route.priority || "critical").toUpperCase()} priority · ${route.vehicle_profile?.description || "Simulated vehicle profile"}`;
       update("Ready to dispatch");
     }
     function frame(now) {

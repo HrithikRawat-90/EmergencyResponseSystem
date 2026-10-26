@@ -125,7 +125,7 @@ def get_edge_weight(
         base_cost *= road_delay
 
     # Apply simulated incident penalty if present (multiplier)
-    if incident_penalties:
+    if incident_penalties and objective != "length":
         penalty = incident_penalties.get((u, v, key), incident_penalties.get((u, v), 1.0))
         base_cost *= penalty
 

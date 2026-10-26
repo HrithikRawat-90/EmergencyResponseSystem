@@ -120,13 +120,13 @@ class TestAlgorithms(unittest.TestCase):
         self.assertEqual(res["distance_m"], 280.0)
 
     def test_incident_penalty(self):
-        # Introduce a high penalty on (3, 4, 0) of 10x (60 * 10 = 600)
-        # Total Path B cost becomes 50 + 600 = 650
-        # Dijkstra should now prefer Path A (80 + 200 = 280)
         penalties = {(3, 4, 0): 10.0}
-        res = algorithms.dijkstra_search(self.g, start_node=1, dest_node=4, incident_penalties=penalties)
-        self.assertTrue(res["found"])
-        self.assertEqual(res["path_nodes"], [1, 2, 4])
+        distance = algorithms.dijkstra_search(self.g, 1, 4, objective="length", incident_penalties=penalties)
+        self.assertEqual(distance["path_nodes"], [1, 3, 4])
+        self.assertEqual(distance["distance_m"], 110)
+        delayed = algorithms.dijkstra_search(self.g, 1, 4, objective="time", incident_penalties=penalties)
+        self.assertTrue(delayed["found"])
+        self.assertEqual(delayed["path_nodes"], [1, 2, 4])
 
     def test_traffic_objective(self):
         # Primary highway has lower traffic penalty than residential

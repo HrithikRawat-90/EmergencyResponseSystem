@@ -54,6 +54,8 @@
       routeRequestId: 0,
       latestResult: null,
       replanCount: 0,
+      environmentRevision: null,
+      simulationInstance: null,
 
       // Hazards
       placingIncident: false,
@@ -117,7 +119,7 @@
         const response = await fetch("/api/route", {
           method: "POST", headers: {"Content-Type": "application/json"},
           body: JSON.stringify({start, destination: previous.destination.snapped,
-            algorithm: previous.algorithm, objective: previous.objective, unit_type: previous.unit_type}),
+            algorithm: previous.algorithm, objective: previous.objective, unit_type: previous.unit_type, priority: previous.priority}),
         });
         return response.json();
       },
@@ -278,11 +280,15 @@
             algorithm: algo,
             objective: objective,
             unit_type: vehicle,
+            priority: byId("select-priority").value,
           }),
         });
 
         const data = await res.json();
         if (requestId !== state.routeRequestId) return;
+        if (state.environmentRevision !== null && data.revision < state.environmentRevision) {
+          computeRoute(); return;
+        }
         if (!data.success) {
           showToast(data.error || "No viable route found.");
           byId("ops-status-text").textContent = "No route found with current obstacles";
@@ -583,7 +589,8 @@
         else journey.invalidate();
         return;
       }
-      if (state.autoReplan && state.start && state.destination) {
+      if (journey.hasMission()) return;
+      if (state.autoReplan && state.start && state.destination && state.latestResult) {
         state.replanCount++;
         computeRoute();
       } else if (state.latestResult) {
@@ -593,6 +600,7 @@
     }
 
     function setIncidentPlacement(active) {
+      if (active) fleetDashboard.cancelPlacement();
       state.placingIncident = active;
       byId("place-incident-btn").textContent = active ? "Cancel placement" : "+ Place Hazard on Map";
       byId("place-incident-btn").setAttribute("aria-pressed", String(active));
@@ -607,6 +615,13 @@
         button.classList.toggle("is-active", selected);
         button.setAttribute("aria-pressed", String(selected));
       });
+    }
+
+    function applyIncidentChange(data, update) {
+      if (state.environmentRevision !== null && data.revision <= state.environmentRevision) return false;
+      state.environmentRevision = data.revision;
+      update(); renderHazards();
+      return true;
     }
 
     // Hazard Simulation
@@ -629,11 +644,11 @@
           return;
         }
 
-        state.activeIncidents.push(data.incident);
-        renderHazards();
+        const changed = applyIncidentChange(data, () => {
+          state.activeIncidents = [...state.activeIncidents.filter(incident => incident.id !== data.incident.id), data.incident];
+        });
         showToast(`Added ${data.incident.type}: ${data.incident.road_name}`);
-
-        replanAfterIncident();
+        if (changed) replanAfterIncident();
       } catch {
         showToast("Failed to place hazard.");
       }
@@ -648,7 +663,7 @@
       if (!container) return;
       container.innerHTML = "";
 
-      byId("incident-status").textContent = state.activeIncidents.length ? `${state.activeIncidents.length} active incidents.` : "No active incidents.";
+      if (!state.placingIncident) byId("incident-status").textContent = state.activeIncidents.length ? `${state.activeIncidents.length} active incidents.` : "No active incidents.";
       state.activeIncidents.forEach((inc) => {
         const color = inc.type === "roadblock" ? "#dc2626" : "#d97706";
         const line = L.polyline(inc.coordinates, {
@@ -666,7 +681,7 @@
         const chip = document.createElement("div");
         chip.className = "hazard-chip";
         const label = document.createElement("span");
-        label.textContent = `${inc.type.toUpperCase()}: ${inc.road_name}`;
+        label.textContent = `${inc.source === "automatic" ? "AUTO " : ""}${inc.type.toUpperCase()}: ${inc.road_name}`;
         const remove = document.createElement("button");
         remove.type = "button";
         remove.dataset.id = inc.id;
@@ -903,10 +918,8 @@
         const res = await fetch("/api/incidents/clear", { method: "POST" });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || "Could not clear incidents.");
-        state.activeIncidents = [];
         setIncidentPlacement(false);
-        renderHazards();
-        replanAfterIncident();
+        if (applyIncidentChange(data, () => { state.activeIncidents = []; })) replanAfterIncident();
       } catch (error) { showToast(error.message); }
     });
 
@@ -917,9 +930,9 @@
         const res = await fetch(`/api/incidents/${button.dataset.id}`, { method: "DELETE" });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || "Could not remove incident.");
-        state.activeIncidents = state.activeIncidents.filter(i => i.id !== button.dataset.id);
-        renderHazards();
-        replanAfterIncident();
+        if (applyIncidentChange(data, () => {
+          state.activeIncidents = state.activeIncidents.filter(i => i.id !== button.dataset.id);
+        })) replanAfterIncident();
       } catch (error) { showToast(error.message); }
     });
 
@@ -930,6 +943,7 @@
         return;
       }
 
+      if (fleetDashboard.handleMapClick(e.latlng)) return;
       if (state.placingIncident) {
         setIncidentPlacement(false);
         placeHazard(e.latlng);
@@ -945,8 +959,29 @@
       }
     });
 
+    const fleetDashboard = window.createFleetDashboard({
+      map, onError: showToast,
+      onPositionMode: () => setIncidentPlacement(false),
+      getSelection: () => ({destination: state.destination ? [state.destination.lat, state.destination.lng] : null,
+        unit_type: byId("select-vehicle").value, priority: byId("select-priority").value,
+        algorithm: byId("algorithm-select").value, objective: byId("select-objective").value}),
+      onWorld: data => {
+        const restarted = state.simulationInstance !== null && data.fleet.instance_id && data.fleet.instance_id !== state.simulationInstance;
+        if (restarted) state.environmentRevision = null;
+        state.simulationInstance = data.fleet.instance_id || state.simulationInstance;
+        if (state.environmentRevision !== null && data.revision <= state.environmentRevision) return;
+        const changed = restarted || state.environmentRevision !== null;
+        state.environmentRevision = data.revision;
+        state.activeIncidents = data.incidents || [];
+        renderHazards();
+        if (changed) replanAfterIncident();
+      },
+    });
+
     resetRoute();
     fetch("/api/incidents").then(res => res.json()).then(data => {
+      if (state.environmentRevision !== null && data.revision < state.environmentRevision) return;
+      state.environmentRevision = data.revision;
       state.activeIncidents = data.incidents || [];
       renderHazards();
     }).catch(() => showToast("Could not load existing incidents."));

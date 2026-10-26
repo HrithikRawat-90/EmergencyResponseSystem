@@ -707,11 +707,34 @@ body.app-body {
 #journey-progress { flex: 1; height: 9px; accent-color: #238775; }
 .journey-vehicle span { width: 40px; height: 40px; display: grid; place-items: center; background: #fff; border: 3px solid var(--vehicle-color); border-radius: 50%; box-shadow: 0 2px 12px #0005; font-size: 23px; }
 .graph-mode .journey-vehicle span { box-shadow: 0 0 14px var(--vehicle-color); }
+.fleet-card { padding: 20px; }
+.fleet-units { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 14px 0; }
+.fleet-unit { padding: 14px; border: 1px solid #d9e5df; border-radius: 10px; min-width: 0; }
+.fleet-unit-label { display: block; font-size: 13px; }
+.fleet-unit-phase { display: inline-block; margin-top: 6px; color: #287862; font-size: 12px; }
+.fleet-unit-detail, .fleet-unit-metrics { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin: 8px 0; }
+.fleet-unit-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.fleet-unit-actions button { padding: 6px 9px; font-size: 11px; text-transform: capitalize; }
+.fleet-table-wrap { overflow-x: auto; }
+.fleet-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fleet-table th, .fleet-table td { padding: 10px 8px; border-bottom: 1px solid #e4ebe7; text-align: left; }
+.agent-model { margin-top: 14px; padding: 12px; background: #f7faf8; border-radius: 8px; font-size: 12px; line-height: 1.6; }
+.agent-model summary { cursor: pointer; font-weight: 600; }
+.fleet-vehicle span { width: 34px; height: 34px; display: grid; place-items: center; background: #fff; border: 2px solid var(--vehicle-color); border-radius: 50%; box-shadow: 0 2px 7px #0004; font-size: 20px; }
+.fleet-vehicle[data-draggable="true"] { cursor: grab; }
+.fleet-vehicle[data-draggable="true"]:active { cursor: grabbing; }
+.fleet-vehicle[data-phase="enroute"] span { box-shadow: 0 0 0 4px #1baf9622, 0 2px 10px #0004; }
+.fleet-vehicle[data-phase="paused"] span { border-color: #d18d23; }
+.fleet-vehicle[data-phase="waiting"] span { border-color: #dc5252; }
+.automatic-traffic { border-top: 1px solid #dbe5df; padding-top: 14px; margin-top: 14px; font-size: 13px; }
+.automatic-traffic .deck-actions-bar { margin: 12px 0 8px; }
+#traffic-seed { width: 90px; border: 0; font: inherit; background: transparent; }
 </style>
   <script>window.APP_CONFIG = {{ app_config | tojson }};</script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script defer src="{{ url_for('static', filename='graph-view.js') }}?v={{ cache_buster }}"></script>
   <script defer src="{{ url_for('static', filename='journey.js') }}?v={{ cache_buster }}"></script>
+  <script defer src="{{ url_for('static', filename='fleet.js') }}?v={{ cache_buster }}"></script>
   <script defer src="{{ url_for('static', filename='app.js') }}?v={{ cache_buster }}"></script>
 </head>
 <body class="app-body">
@@ -896,6 +919,18 @@ body.app-body {
                 </div>
                 <p id="incident-status" class="hazard-help" role="status">No active incidents.</p>
                 <div id="hazards-list" class="hazards-chips-box"></div>
+                <div class="automatic-traffic">
+                  <strong>Automatic traffic simulation</strong>
+                  <p class="hazard-help">Seeded congestion changes are shared by every vehicle. Reset removes automatic traffic only.</p>
+                  <div class="deck-actions-bar">
+                    <button id="auto-traffic-start" class="btn-outline-subtle" type="button">Start traffic</button>
+                    <button id="auto-traffic-pause" class="btn-outline-subtle" type="button">Pause traffic</button>
+                    <button id="auto-traffic-reset" class="btn-outline-subtle" type="button">Reset traffic</button>
+                    <label class="speed-selector-group">Update interval <select id="traffic-interval" class="speed-select"><option value="5">5 s</option><option value="10" selected>10 s</option><option value="20">20 s</option></select></label>
+                    <label class="speed-selector-group">Seed <input id="traffic-seed" type="number" min="0" max="4294967295" step="1" value="42" aria-label="Traffic random seed"></label>
+                  </div>
+                  <p id="auto-traffic-status" class="hazard-help" role="status">Paused · 0 traffic updates</p>
+                </div>
               </div>
 
               <p class="deck-disclaimer">
@@ -940,6 +975,37 @@ body.app-body {
 
 
         </div>
+        <section id="fleet-panel" class="card fleet-card" aria-label="Multi-agent emergency fleet" data-running="false">
+          <div class="journey-heading"><h2 class="card-heading">Multi-agent emergency fleet</h2><span id="fleet-status" role="status">Loading fleet…</span></div>
+          <p class="form-help-text">Select a destination, vehicle type and priority above, then queue an emergency. The dispatcher chooses the available compatible unit with the lowest ETA. Critical requests go first; ties use arrival order. Assigned missions are not preempted.</p>
+          <div class="deck-actions-bar">
+            <button id="fleet-queue-btn" class="btn-primary-green" type="button">Queue selected destination</button>
+            <button id="fleet-start-btn" class="btn-outline-subtle" type="button">Start dispatcher</button>
+            <button id="fleet-pause-btn" class="btn-outline-subtle" type="button">Pause fleet</button>
+            <button id="fleet-reset-btn" class="btn-outline-subtle" type="button">Reset fleet</button>
+            <label class="speed-selector-group">Fleet speed <select id="fleet-speed" class="speed-select"><option value="10">10×</option><option value="30" selected>30×</option><option value="60">60×</option></select></label>
+          </div>
+          <label class="settings-check"><input id="fleet-show-map" type="checkbox"> Show fleet agents and routes on map</label>
+          <p class="form-help-text">Assigned units move along their roads. Available, paused, or blocked units stay still. Start dispatcher brings active journeys into view.</p>
+          <div class="deck-actions-bar" aria-label="Manage fleet vehicles">
+            <label class="speed-selector-group">New vehicle <select id="fleet-add-type" class="speed-select"><option value="ambulance">Ambulance</option><option value="fire">Fire brigade</option><option value="police">Police</option></select></label>
+            <button id="fleet-add-btn" class="btn-outline-subtle" type="button">Add on map</button>
+            <span id="fleet-count" role="status"></span>
+          </div>
+          <p class="form-help-text">Drag available vehicle icons on the map to move them, or use Add on map / move and click a road inside the working sector. Positions snap to road nodes. Finish or cancel an assigned mission before editing its vehicle. Reset fleet keeps your vehicle list and chosen starting positions; restarting the server restores defaults.</p>
+          <div id="fleet-placement" hidden><span id="fleet-placement-status" role="status"></span> <button id="fleet-placement-cancel" class="btn-outline-subtle" type="button">Cancel placement</button></div>
+          <div id="fleet-units" class="fleet-units"></div>
+          <p id="fleet-empty" class="form-help-text">No emergency requests. Queue several priorities before starting to compare dispatch order.</p>
+          <div class="fleet-table-wrap"><table class="fleet-table"><thead><tr><th>Request</th><th>Priority</th><th>Vehicle</th><th>Status / assigned unit</th><th>Wait</th><th>Action</th></tr></thead><tbody id="fleet-requests"></tbody></table></div>
+          <details class="agent-model"><summary>Dispatcher event log</summary><ol id="fleet-events"></ol></details>
+          <details class="agent-model"><summary>AI agent model and environment classification</summary>
+            <p><strong>State:</strong> vehicle position, availability, current mission, emergency queue with priorities, road conditions and time.</p>
+            <p><strong>Actions:</strong> assign a compatible unit, traverse a directed road, wait, pause, reroute, cancel and complete a mission. The goal is arrival at the assigned emergency destination.</p>
+            <p><strong>Performance:</strong> priority/FIFO assignment, minimum compatible ETA, wait time, travel distance/time, completed missions and replans. Dijkstra and A* optimize the selected cost; BFS minimizes hops and DFS finds a first path.</p>
+            <p><strong>Environment:</strong> fully observable simulated state; sequential and dynamic; deterministic route planning on each snapshot, stochastic traffic with a reproducible seed; cooperative multi-agent fleet with shared hazards; discrete road graph plus continuous travel interpolation. Pause freezes travel, while traffic has its own controls.</p>
+            <p><strong>PEAS:</strong> performance = the metrics above; environment = roads, units, emergencies and incidents; actuators = movement, assignment and rerouting; sensors = known graph, incident registry and fleet positions. No live traffic feed or real emergency driving guarantees.</p>
+          </details>
+        </section>
       </div>
 
       <!-- Right Column: Settings & Route Summary Cards -->
@@ -1007,7 +1073,7 @@ body.app-body {
 
             <p class="form-help-text" id="vehicle-profile-info">Vehicle profiles simulate different speeds and road-class delays.</p>
             <p class="form-help-text">
-              Blocked roads are excluded. Traffic and accident penalties follow the selected objective.
+              Blocked roads are excluded. Minimum distance uses physical road length; other objectives include incident costs. BFS/DFS do not optimize weighted objectives.
             </p>
 
             <button id="calculate-route-btn" class="btn-calculate" type="button">
