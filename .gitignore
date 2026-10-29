@@ -11,3 +11,24 @@ __pycache__/
 
 # Local API rotation state
 /key_state.json
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+
+# Installed JavaScript dependencies
+node_modules/
+
+# Generated report previews and working files
+/reports/**/qa/
+
+# Test caches and coverage output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Logs and temporary Office files
+*.log
+~$*
