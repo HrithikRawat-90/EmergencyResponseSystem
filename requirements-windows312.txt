@@ -1,0 +1,5 @@
+# Tested Windows/Python 3.12 dependencies. Newer pandas binaries were blocked
+# by Windows App Control on this machine; keep the validated versions.
+-r requirements.txt
+numpy==2.2.6
+pandas==2.2.3

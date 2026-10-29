@@ -1,5 +1,6 @@
 # Local Python environment
 /.venv/
+/.venv312/
 
 # Generated Python bytecode
 __pycache__/

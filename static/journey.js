@@ -1,11 +1,11 @@
 /* Vehicle dispatch has its own clock and layers; route-discovery playback stays separate. */
 (() => {
   "use strict";
-  window.createDispatchSimulation = ({map, requestRoute, onStatus, onChange, onReplanned, onCancel}) => {
+  window.createDispatchSimulation = ({map, requestRoute, onStatus, onChange, onReplanned, onCancel, audio}) => {
     const byId = id => document.getElementById(id);
-    const units = {ambulance: {label: "Ambulance", icon: "🚑", color: "#169b82"},
-      fire: {label: "Fire brigade", icon: "🚒", color: "#e88032"},
-      police: {label: "Police", icon: "🚓", color: "#3984eb"}};
+    const units = {ambulance: {label: "Ambulance", color: "#169b82"},
+      fire: {label: "Fire brigade", color: "#e88032"},
+      police: {label: "Police", color: "#3984eb"}};
     let data = null, legs = [], index = 0, legElapsed = 0, elapsed = 0, travelled = 0;
     let phase = "idle", marker = null, line = null, renderer = null, timer = null, last = null;
     let generation = 0, resumePaused = false;
@@ -38,6 +38,7 @@
       return {seconds: Math.max(0, seconds), distance: Math.max(0, distance)};
     }
     function update(message) {
+      audio?.setVehicles("journey", phase === "running" && data ? [{id: "manual", type: data.unit_type}] : []);
       const left = remaining(), total = travelled + left.distance;
       const progress = phase === "completed" ? 100 : total ? Math.min(100, travelled / total * 100) : 0;
       byId("journey-panel").dataset.phase = phase;
@@ -61,6 +62,7 @@
       }
       if (marker) {
         const position = marker.getLatLng();
+        marker.getElement().dataset.phase = phase;
         marker.getElement().dataset.position = JSON.stringify([position.lat, position.lng]);
       }
       onChange(phase);
@@ -106,7 +108,7 @@
           budget -= step;
           if (legElapsed >= leg.duration_s) { index++; legElapsed = 0; }
         }
-        marker.setLatLng(location());
+        window.vehicleIcons.setPosition(marker, location());
         if (index >= legs.length) {
           phase = "completed";
           update("Mission completed · Unit arrived");
@@ -119,10 +121,13 @@
     }
     function start() {
       if (phase !== "ready") return;
+      audio?.unlock();
       const unit = units[data.unit_type];
       marker = L.marker(data.start.snapped, {interactive: false, zIndexOffset: 500,
-        icon: L.divIcon({className: "journey-vehicle", iconSize: [40, 40], iconAnchor: [20, 20],
-          html: `<span style="--vehicle-color:${unit.color}" role="img" aria-label="${unit.label}">${unit.icon}</span>`})}).addTo(map);
+        icon: L.divIcon({className: "journey-vehicle", iconSize: [44, 56], iconAnchor: [22, 28],
+          html: window.vehicleIcons.html(data.unit_type, unit.label, unit.color)})}).addTo(map);
+      const firstRoad = legs.find(leg => leg.geometry.length > 1)?.geometry;
+      if (firstRoad) window.vehicleIcons.face(marker, firstRoad[0], firstRoad[1]);
       drawRoute(); phase = "running"; last = null;
       update("En route"); onStatus(`${unit.label} dispatched · Simulation in progress`);
       timer = requestAnimationFrame(frame);
@@ -178,6 +183,7 @@
     byId("begin-dispatch-btn").addEventListener("click", start);
     byId("journey-pause-btn").addEventListener("click", () => {
       if (!["running", "paused"].includes(phase)) return;
+      audio?.unlock();
       phase = phase === "running" ? "paused" : "running"; resumePaused = phase === "paused";
       update(resumePaused ? "Journey paused" : "En route");
       onStatus(resumePaused ? "Vehicle journey paused" : "Vehicle en route");

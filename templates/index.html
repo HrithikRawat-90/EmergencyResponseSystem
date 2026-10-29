@@ -705,8 +705,13 @@ body.app-body {
 .journey-stats span { color: var(--text-secondary); font-size: 11px; }
 .journey-progress-row { display: flex; gap: 12px; align-items: center; font-size: 12px; }
 #journey-progress { flex: 1; height: 9px; accent-color: #238775; }
-.journey-vehicle span { width: 40px; height: 40px; display: grid; place-items: center; background: #fff; border: 3px solid var(--vehicle-color); border-radius: 50%; box-shadow: 0 2px 12px #0005; font-size: 23px; }
-.graph-mode .journey-vehicle span { box-shadow: 0 0 14px var(--vehicle-color); }
+.vehicle-shell { width: 44px; height: 56px; display: grid; place-items: center; border-radius: 14px; background: transparent; }
+.vehicle-art { display: block; width: 24px; height: 36px; object-fit: contain; pointer-events: none; user-select: none; filter: drop-shadow(0 1px 1px #0006) drop-shadow(0 0 1px #fff9); transition: transform 100ms linear; }
+.journey-vehicle[data-phase="running"] .vehicle-art, .fleet-vehicle[data-phase="enroute"][data-running="true"] .vehicle-art { width: 18px; height: 28px; }
+.graph-mode .vehicle-art { filter: drop-shadow(0 1px 1px #0009) drop-shadow(0 0 1.5px var(--vehicle-color)); }
+.unit-vehicle-icon { width: 24px; height: 38px; object-fit: contain; flex-shrink: 0; }
+.sound-volume-label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+@media (prefers-reduced-motion: reduce) { .vehicle-art { transition: none; } }
 .fleet-card { padding: 20px; }
 .fleet-units { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 14px 0; }
 .fleet-unit { padding: 14px; border: 1px solid #d9e5df; border-radius: 10px; min-width: 0; }
@@ -720,12 +725,11 @@ body.app-body {
 .fleet-table th, .fleet-table td { padding: 10px 8px; border-bottom: 1px solid #e4ebe7; text-align: left; }
 .agent-model { margin-top: 14px; padding: 12px; background: #f7faf8; border-radius: 8px; font-size: 12px; line-height: 1.6; }
 .agent-model summary { cursor: pointer; font-weight: 600; }
-.fleet-vehicle span { width: 34px; height: 34px; display: grid; place-items: center; background: #fff; border: 2px solid var(--vehicle-color); border-radius: 50%; box-shadow: 0 2px 7px #0004; font-size: 20px; }
 .fleet-vehicle[data-draggable="true"] { cursor: grab; }
 .fleet-vehicle[data-draggable="true"]:active { cursor: grabbing; }
-.fleet-vehicle[data-phase="enroute"] span { box-shadow: 0 0 0 4px #1baf9622, 0 2px 10px #0004; }
-.fleet-vehicle[data-phase="paused"] span { border-color: #d18d23; }
-.fleet-vehicle[data-phase="waiting"] span { border-color: #dc5252; }
+.fleet-vehicle[data-phase="enroute"] .vehicle-shell { background: transparent; }
+.fleet-vehicle[data-phase="paused"] .vehicle-shell { outline: 2px solid #d18d23; background: #d18d231c; }
+.fleet-vehicle[data-phase="waiting"] .vehicle-shell { outline: 2px solid #dc5252; background: #dc52521c; }
 .automatic-traffic { border-top: 1px solid #dbe5df; padding-top: 14px; margin-top: 14px; font-size: 13px; }
 .automatic-traffic .deck-actions-bar { margin: 12px 0 8px; }
 #traffic-seed { width: 90px; border: 0; font: inherit; background: transparent; }
@@ -733,8 +737,10 @@ body.app-body {
   <script>window.APP_CONFIG = {{ app_config | tojson }};</script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script defer src="{{ url_for('static', filename='graph-view.js') }}?v={{ cache_buster }}"></script>
+  <script defer src="{{ url_for('static', filename='vehicle-icons.js') }}?v={{ cache_buster }}"></script>
   <script defer src="{{ url_for('static', filename='journey.js') }}?v={{ cache_buster }}"></script>
   <script defer src="{{ url_for('static', filename='fleet.js') }}?v={{ cache_buster }}"></script>
+  <script defer src="{{ url_for('static', filename='search-audio.js') }}?v={{ cache_buster }}"></script>
   <script defer src="{{ url_for('static', filename='app.js') }}?v={{ cache_buster }}"></script>
 </head>
 <body class="app-body">
@@ -949,21 +955,21 @@ body.app-body {
             <div id="tabpanel-units" class="tab-content" hidden>
               <div class="units-status-grid">
                 <div class="unit-card-item">
-                  <span class="unit-dot green"></span>
+                  <img class="unit-vehicle-icon" src="{{ url_for('static', filename='vehicles/ambulance.svg') }}" alt="Ambulance, top view">
                   <div>
                     <strong>Ambulance-1 (EMS)</strong>
                     <small id="unit-status-ambulance">Available</small>
                   </div>
                 </div>
                 <div class="unit-card-item">
-                  <span class="unit-dot orange"></span>
+                  <img class="unit-vehicle-icon" src="{{ url_for('static', filename='vehicles/fire.svg') }}" alt="Fire engine, top view">
                   <div>
                     <strong>Fire Engine-3 (Rescue)</strong>
                     <small id="unit-status-fire">Available</small>
                   </div>
                 </div>
                 <div class="unit-card-item">
-                  <span class="unit-dot blue"></span>
+                  <img class="unit-vehicle-icon" src="{{ url_for('static', filename='vehicles/police.svg') }}" alt="Police car, top view">
                   <div>
                     <strong>Police Patrol-7 (Traffic)</strong>
                     <small id="unit-status-police">Available</small>
@@ -1099,6 +1105,19 @@ body.app-body {
             <label class="settings-check"><input id="show-search-toggle" type="checkbox" checked> Show exploration branches</label>
             <label class="settings-check"><input id="show-nodes-toggle" type="checkbox"> Show all working-area nodes (blue)</label>
             <label class="settings-check"><input id="auto-replan-toggle" type="checkbox" checked> Recalculate after incident changes</label>
+            <label class="settings-check"><input id="sound-enabled-toggle" type="checkbox" checked> Search and vehicle sounds</label>
+            <div class="form-row">
+              <label for="search-volume" class="field-label sound-volume-label">Algorithm search <output id="search-volume-value" for="search-volume">85%</output></label>
+              <input id="search-volume" type="range" min="0" max="100" value="85" style="width: 100%; accent-color: #1b4d44;">
+            </div>
+            <div class="form-row">
+              <label for="found-volume" class="field-label sound-volume-label">Destination found <output id="found-volume-value" for="found-volume">65%</output></label>
+              <input id="found-volume" type="range" min="0" max="100" value="65" style="width: 100%; accent-color: #1b4d44;">
+            </div>
+            <div class="form-row">
+              <label for="vehicle-volume" class="field-label sound-volume-label">Vehicle sirens <output id="vehicle-volume-value" for="vehicle-volume">65%</output></label>
+              <input id="vehicle-volume" type="range" min="0" max="100" value="65" style="width: 100%; accent-color: #1b4d44;">
+            </div>
             <p class="form-help-text">Playback changes apply immediately. Automatic recalculation requires both waypoints.</p>
           </div>
         </section>

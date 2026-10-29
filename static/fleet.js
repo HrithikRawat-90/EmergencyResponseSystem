@@ -1,9 +1,8 @@
 /* Shared server fleet: independent agents, central priority/ETA assignment, shared hazards. */
 (() => {
   "use strict";
-  window.createFleetDashboard = ({map, getSelection, onWorld, onError, onPositionMode}) => {
+  window.createFleetDashboard = ({map, getSelection, onWorld, onError, onPositionMode, audio}) => {
     const byId = id => document.getElementById(id);
-    const icons = {ambulance: "🚑", fire: "🚒", police: "🚓"};
     const colors = {ambulance: "#1baf96", fire: "#ed913f", police: "#438bfa"};
     const layers = new Map(), cards = new Map(), rows = new Map();
     let renderer = null, latest = null, polling = false, disposed = false, initial = true, lastEvent = -1, lastSnapshot = -1, trafficDraft = false;
@@ -73,7 +72,7 @@
         const motion = owned.motion;
         const fraction = Math.max(0, Math.min(1, (now - motion.started) / motion.duration));
         owned.displayTime = motion.from + (motion.to - motion.from) * fraction;
-        owned.marker.setLatLng(positionAt(motion.trace, owned.displayTime));
+        window.vehicleIcons.setPosition(owned.marker, positionAt(motion.trace, owned.displayTime));
         owned.marker.getElement().dataset.position = JSON.stringify(owned.marker.getLatLng());
         if (fraction === 1) owned.motion = null; else moving = true;
         owned.marker.getElement().dataset.animating = String(owned.motion !== null);
@@ -96,11 +95,12 @@
         }
       } else {
         owned.motion = null; owned.displayTime = unit.elapsed_s;
-        owned.marker.setLatLng(unit.position);
+        window.vehicleIcons.setPosition(owned.marker, unit.position);
       }
       owned.requestId = unit.request_id;
       const element = owned.marker.getElement();
       element.dataset.phase = unit.phase;
+      element.dataset.running = String(running);
       element.dataset.animating = String(owned.motion !== null);
       element.setAttribute("aria-label", `${unit.label}: ${phaseLabels[unit.phase] || unit.phase}`);
       element.dataset.position = JSON.stringify(owned.marker.getLatLng());
@@ -120,10 +120,10 @@
           continue;
         }
         if (!owned) {
-          const icon = L.divIcon({className: "fleet-vehicle", iconSize: [34, 34], iconAnchor: [17, 17],
-            html: `<span style="--vehicle-color:${colors[unit.type]}" role="img" aria-label="${unit.label}">${icons[unit.type]}</span>`});
+          const icon = L.divIcon({className: "fleet-vehicle", iconSize: [44, 56], iconAnchor: [22, 28],
+            html: window.vehicleIcons.html(unit.type, unit.label, colors[unit.type])});
           const marker = L.marker(unit.position, {icon, zIndexOffset: 300, draggable: !unit.request_id,
-            autoPan: true, bubblingMouseEvents: false}).addTo(map);
+            autoPan: true, bubblingMouseEvents: false, riseOnHover: true}).addTo(map);
           marker.bindTooltip(unit.label);
           owned = {marker, route: null, requestId: unit.request_id, displayTime: unit.elapsed_s,
             motion: null, dragging: false, saving: false}; layers.set(unit.id, owned);
@@ -194,6 +194,7 @@
       if (fleet.sequence <= lastSnapshot) return;
       lastSnapshot = fleet.sequence;
       latest = data;
+      audio?.setVehicles("fleet", fleet.running ? fleet.units.filter(unit => unit.request_id && unit.phase === "enroute") : []);
       if (initial) { if (fleet.running) byId("fleet-show-map").checked = true; initial = false; }
       byId("fleet-panel").dataset.running = String(fleet.running);
       byId("fleet-panel").dataset.instanceId = instance || "";
@@ -275,11 +276,13 @@
       const response = await fetch("/api/simulation", {cache: "no-store"});
         const data = await response.json();
         if (response.ok && data.success && !disposed) render(data);
-      } catch { byId("fleet-status").textContent = "Simulation connection unavailable"; }
+        else if (!disposed) audio?.setVehicles("fleet", []);
+      } catch { audio?.setVehicles("fleet", []); byId("fleet-status").textContent = "Simulation connection unavailable"; }
       finally { polling = false; }
     }
     function action(button, operation) {
       button.addEventListener("click", async () => {
+        audio?.unlock();
         button.disabled = true;
         try { await operation(); } catch (error) {onError(error.message);}
         finally {button.disabled = false;}
@@ -319,6 +322,7 @@
     byId("fleet-units").addEventListener("click", event => {
       const button = event.target.closest("button[data-unit-id]");
       if (!button || button.disabled) return;
+      audio?.unlock();
       if (button.dataset.action === "move") {beginPlacement({id: button.dataset.unitId}); return;}
       if (button.dataset.action === "remove") {
         call(`/api/fleet/units/${button.dataset.unitId}`, undefined, "DELETE").catch(error => onError(error.message)); return;
@@ -336,6 +340,7 @@
     refresh();
     const interval = setInterval(refresh, pollInterval);
     window.addEventListener("pagehide", () => {
+      audio?.setVehicles("fleet", []);
       disposed = true; clearInterval(interval);
       if (animation !== null) cancelAnimationFrame(animation);
     }, {once: true});

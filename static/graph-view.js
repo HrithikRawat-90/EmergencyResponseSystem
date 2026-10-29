@@ -76,7 +76,7 @@
     };
   };
 
-  window.createGraphView = ({map, url, contextUrl, workingBounds, getState, onProgress, onFound, onComplete, onStatus}) => {
+  window.createGraphView = ({map, url, contextUrl, workingBounds, getState, onProgress, onFound, onComplete, onStatus, audio}) => {
     const colors = {Dijkstra: "#00c9ff", "A*": "#c481ff", BFS: "#42aeff", DFS: "#f078ce"};
     let roads = [], projected = [], adjacency = new Map(), loading = null;
     let worlds = [], surroundings = [], contextLoading = null;
@@ -302,6 +302,7 @@
     }
 
     function clearPlayback() {
+      audio?.stop();
       if (timer !== null) cancelAnimationFrame(timer);
       timer = null; result = null; expanded = 0; routeProgress = 0;
       phase = "idle"; painted.clear();
@@ -333,13 +334,16 @@
             const snapshot = data.search_progress?.[expanded - 1] || {distance_m: 0, duration_s: 0, nodes_expanded: 0};
             onProgress(snapshot, data.algorithm, "Graph exploration · Current path from start");
             onStatus(`${data.algorithm} · Exploring ${expanded.toLocaleString()} / ${visited.length.toLocaleString()} nodes`);
-            if (fraction === 1) { phase = "route"; onFound(data); }
+            if (!reduced) audio?.update("search", fraction, {expanded, elapsedMs: searchElapsed});
+            if (fraction === 1) { phase = "route"; audio?.update("found", 0); onFound(data); }
           } else {
             routeElapsed += elapsed;
             routeProgress = reduced ? 1 : Math.min(routeElapsed / 2200, 1);
+            audio?.update("found", routeProgress);
             onStatus(`${data.algorithm} · Graph route found · Tracing path`);
             if (routeProgress === 1) {
               phase = "complete"; draw(); timer = null;
+              audio?.stop();
               onStatus(`Route Active · ${(data.distance_m / 1000).toFixed(2)} km (${data.algorithm})`);
               onComplete(data);
               return;

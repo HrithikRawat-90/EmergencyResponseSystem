@@ -90,10 +90,30 @@
       interactive: false,
     }).addTo(map);
 
+    const searchAudio = window.createSearchAudio();
+    const soundEnabled = byId("sound-enabled-toggle");
+    const soundSliders = {search: byId("search-volume"), found: byId("found-volume"), vehicles: byId("vehicle-volume")};
+    const audioSettings = searchAudio.getSettings();
+    soundEnabled.checked = audioSettings.enabled;
+    for (const [name, slider] of Object.entries(soundSliders)) {
+      slider.value = String(Math.round(audioSettings.volumes[name] * 100));
+      byId(`${slider.id}-value`).textContent = `${slider.value}%`;
+    }
+    const applyAudioSettings = () => {
+      const volumes = {};
+      for (const [name, slider] of Object.entries(soundSliders)) {
+        volumes[name] = Number(slider.value) / 100;
+        byId(`${slider.id}-value`).textContent = `${slider.value}%`;
+      }
+      searchAudio.settings(soundEnabled.checked, volumes);
+    };
+    soundEnabled.addEventListener("change", applyAudioSettings);
+    for (const slider of Object.values(soundSliders)) slider.addEventListener("input", applyAudioSettings);
     let realViewport = null, graphViewport = null;
     const graphView = window.createGraphView({
       map, url: config.graph_url || "/api/graph",
       contextUrl: config.graph_context_url || "/api/graph-context", workingBounds: config.bounds, getState: () => state,
+      audio: searchAudio,
       onProgress: updateLiveSummary,
       onStatus: text => { byId("ops-status-text").textContent = text; },
       onComplete: data => journey.prepare(data),
@@ -107,7 +127,7 @@
     const workingNodes = window.createWorkingNodesOverlay({map, url: "/api/nodes"});
 
     const journey = window.createDispatchSimulation({
-      map,
+      map, audio: searchAudio,
       onStatus: text => { byId("ops-status-text").textContent = text; },
       onChange: phase => {
         const active = ["running", "paused", "waiting", "replanning"].includes(phase);
@@ -209,6 +229,7 @@
 
     // Clear all existing animation / route layers
     function clearRouteLayers() {
+      searchAudio.stop();
       graphView.clearPlayback();
       if (state.animationTimer !== null) {
         cancelAnimationFrame(state.animationTimer);
@@ -262,6 +283,7 @@
         return;
       }
 
+      searchAudio.unlock();
       const algo = byId("algorithm-select").value;
       const objective = byId("select-objective").value;
       const vehicle = byId("select-vehicle").value;
@@ -408,6 +430,7 @@
 
       function beginReveal() {
         phase = "reveal";
+        searchAudio.update("found", 0);
         state.searchComplete = true;
         updateDetails();
         updateSummaryUI(data);
@@ -465,10 +488,12 @@
               tip.setLatLng(end);
             }
             setStatus(`${data.algorithm} · Exploring ${completed.toLocaleString()} / ${edges.length.toLocaleString()} connections`);
+            if (!reducedMotion) searchAudio.update("search", progress, {expanded: completed, elapsedMs: searchTime});
             if (progress === 1) beginReveal();
           } else {
             revealTime += elapsed;
             const progress = revealDuration ? Math.min(revealTime / revealDuration, 1) : 1;
+            searchAudio.update("found", progress);
             // Gentle ease-in/out, measured by road distance rather than vertex count.
             const distance = routeLength * (progress * progress * (3 - 2 * progress));
             let index = 0;
@@ -503,6 +528,7 @@
               }
               setStatus(`Route Active · ${(data.distance_m / 1000).toFixed(2)} km (${data.algorithm})`);
               state.animationTimer = null;
+              searchAudio.stop();
               journey.prepare(data);
               return;
             }
@@ -744,12 +770,14 @@
     // Playback Controls
     byId("resume-playback-btn").addEventListener("click", () => {
       state.animationPaused = !state.animationPaused;
+      searchAudio.pause(state.animationPaused);
       map.getContainer().classList.toggle("playback-paused", state.animationPaused);
       byId("resume-playback-btn").textContent = state.animationPaused ? "Resume" : "Pause";
     });
 
     byId("replay-btn").addEventListener("click", () => {
       if (state.latestResult) {
+        searchAudio.unlock();
         startRoutePlayback(state.latestResult);
       }
     });
@@ -960,7 +988,7 @@
     });
 
     const fleetDashboard = window.createFleetDashboard({
-      map, onError: showToast,
+      map, audio: searchAudio, onError: showToast,
       onPositionMode: () => setIncidentPlacement(false),
       getSelection: () => ({destination: state.destination ? [state.destination.lat, state.destination.lng] : null,
         unit_type: byId("select-vehicle").value, priority: byId("select-priority").value,

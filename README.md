@@ -22,6 +22,26 @@ For future changes, read **`PROJECT_SUMMARY.md`** first. Coverage is controlled 
 
 ## Windows Setup & Quickstart (Python 3.12)
 
+### Validated Windows launch (2026-10-28)
+
+This machine has a working `.venv312` environment. Start from the project folder:
+
+```powershell
+.\run.cmd
+```
+
+This explicitly uses Python 3.12, pandas 2.2.3, and NumPy 2.2.6. Bare `python app.py` currently selects the global Python 3.15 installation whose pandas binary is blocked by Windows App Control. The original `.venv` also uses 3.15 and remains untouched.
+
+To reproduce on a machine with Python 3.12 installed:
+
+```powershell
+py -3.12 -m venv .venv312
+.\.venv312\Scripts\python.exe -m pip install -r requirements-windows312.txt
+.\run.cmd
+```
+
+The environment on this machine was created with the available Codex Python 3.12.14 runtime. Its `pyvenv.cfg` references that runtime; recreate the environment with your own Python 3.12 installation if the runtime is removed. No Windows application policies were changed.
+
 ### 1. Create and Activate a Virtual Environment
 Open PowerShell inside your cloned project folder:
 ```powershell

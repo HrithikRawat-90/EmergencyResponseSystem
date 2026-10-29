@@ -17,10 +17,20 @@ const assert = require('node:assert/strict');
     const marker = page.locator('.fleet-vehicle[data-unit-id="fire-1"]');
     async function state() {return (await (await page.request.get(`${base}/api/simulation`)).json()).fleet;}
     async function drag(dx, dy, hold = false) {
-      const box = await marker.boundingBox();
-      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      // Portrait artwork can overlap a neighboring unit. Grab an exposed part
+      // of this vehicle instead of assuming its center is always the top hit.
+      const grab = await marker.evaluate(el => {
+        const rect=el.getBoundingClientRect();
+        for (const y of [.5,.25,.75,.1,.9]) for (const x of [.5,.25,.75,.1,.9]) {
+          const point={x:rect.left+rect.width*x,y:rect.top+rect.height*y};
+          if (document.elementFromPoint(point.x,point.y)?.closest('.fleet-vehicle')===el) return point;
+        }
+        return null;
+      });
+      assert.ok(grab,'the intended vehicle must expose a draggable hit area');
+      await page.mouse.move(grab.x, grab.y);
       await page.mouse.down();
-      await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2 + dy, {steps: 12});
+      await page.mouse.move(grab.x + dx, grab.y + dy, {steps: 12});
       if (hold) {
         const transform = await marker.evaluate(el => el.style.transform);
         await page.waitForTimeout(1100);
